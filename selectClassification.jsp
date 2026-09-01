@@ -147,6 +147,68 @@ function setClsAttrs(clsName, clsDisplayName){
 		}
 	}
 }
+
+/*
+ * 分类属性由所选分类动态返回。中文属性内部名为 horn_xxx，
+ * 对应英文属性内部名为 horn_xxx_en；按内部名动态配对，不依赖显示名称。
+ */
+function getPairedClassificationAttrKeys(dataJson){
+	var sourceKeys = [];
+	var configuredKeys = dataJson["attrNamesAry"];
+	var pairByBaseName = {};
+	var baseNameOrder = [];
+	var orderedKeys = [];
+
+	/* 接口提供属性顺序时优先使用；否则使用本次分类数据中的属性顺序。 */
+	if(configuredKeys && configuredKeys.length){
+		for(var configuredIndex = 0; configuredIndex < configuredKeys.length; configuredIndex++){
+			if(dataJson[configuredKeys[configuredIndex]]){
+				sourceKeys.push(configuredKeys[configuredIndex]);
+			}
+		}
+	}else{
+		for(var key in dataJson){
+			if(dataJson.hasOwnProperty && !dataJson.hasOwnProperty(key)){
+				continue;
+			}
+			var candidateArray = dataJson[key];
+			if(candidateArray && candidateArray.length && candidateArray[0]["attrName"]){
+				sourceKeys.push(key);
+			}
+		}
+	}
+
+	for(var i = 0; i < sourceKeys.length; i++){
+		var attrArray = dataJson[sourceKeys[i]];
+		if(!attrArray || !attrArray.length){
+			continue;
+		}
+		var attrName = attrArray[0]["attrName"] || sourceKeys[i];
+		var isEnglish = /_en$/i.test(attrName);
+		var baseName = isEnglish ? attrName.substring(0, attrName.length - 3) : attrName;
+		var baseNameKey = "$" + baseName.toLowerCase();
+		if(!pairByBaseName[baseNameKey]){
+			pairByBaseName[baseNameKey] = {};
+			baseNameOrder.push(baseNameKey);
+		}
+		if(isEnglish){
+			pairByBaseName[baseNameKey].englishKey = sourceKeys[i];
+		}else{
+			pairByBaseName[baseNameKey].chineseKey = sourceKeys[i];
+		}
+	}
+
+	for(var j = 0; j < baseNameOrder.length; j++){
+		var attrPair = pairByBaseName[baseNameOrder[j]];
+		if(attrPair.chineseKey){
+			orderedKeys.push(attrPair.chineseKey);
+		}
+		if(attrPair.englishKey){
+			orderedKeys.push(attrPair.englishKey);
+		}
+	}
+	return orderedKeys;
+}
 		
 /* 生成html内容 */
 function getHTML(dataJson, seq){
@@ -168,7 +230,9 @@ function getHTML(dataJson, seq){
 	cell.innerHTML = "";							//每次先清空
 	var innerHTML="<table class='clsAttrTable' id='clsAttrTable"+seq+"'><tr>";
 	var tdNum=0;
-	for(var key in dataJson){ 
+	var attrKeys = getPairedClassificationAttrKeys(dataJson);
+	for(var keyIndex=0; keyIndex<attrKeys.length; keyIndex++){
+		var key = attrKeys[keyIndex];
 		/* 分类属性信息 */
 		var attrName = "";
 		var attrDisplayName = "";
@@ -297,13 +361,17 @@ function getHTML(dataJson, seq){
 		}
 		htmls += "</td>";
 		tdNum++;
-		if(tdNum%3 == 0){												//每五个属性,换行
+		if(tdNum%2 == 0){												//每组中英文属性显示一行
 			htmls += "</tr><tr>";
 		}
 		innerHTML += htmls;
 		
 	} 
 	cell.innerHTML = innerHTML+"</tr></table>";
+	/* 分类属性为动态内容，生成完成后再由父页面绑定材质下拉和联动。 */
+	if(window.opener && window.opener.initializeMaterialComboboxes){
+		window.opener.initializeMaterialComboboxes(seq);
+	}
 }
 </script>
 

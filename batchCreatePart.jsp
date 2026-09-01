@@ -72,6 +72,75 @@
 		width: 100px;
 	}
 
+	/* 单一外观的可编辑下拉框：输入区和箭头位于同一个边框内。 */
+	.materialCombobox{
+		position: relative;
+		display: inline-block;
+		box-sizing: border-box;
+		width: 100px;
+		height: 21px;
+		border: 1px solid #a9a9a9;
+		background-color: #ffffff;
+		vertical-align: middle;
+	}
+
+	.clsAttrTable .materialCombobox input{
+		box-sizing: border-box;
+		width: 100%;
+		height: 100%;
+		margin: 0;
+		padding: 1px 20px 1px 3px;
+		border: 0;
+		outline: none;
+		background-color: #ffffff;
+	}
+
+	.materialComboArrow{
+		position: absolute;
+		right: 0;
+		top: 0;
+		box-sizing: border-box;
+		width: 18px;
+		height: 19px;
+		border-left: 1px solid #a9a9a9;
+		background-color: #f3f3f3;
+		color: #333333;
+		font-size: 10px;
+		line-height: 18px;
+		text-align: center;
+		cursor: pointer;
+		user-select: none;
+	}
+
+	.materialComboDropdown{
+		position: absolute;
+		left: -1px;
+		top: 20px;
+		z-index: 10000;
+		display: none;
+		box-sizing: border-box;
+		min-width: 100px;
+		max-height: 180px;
+		overflow-x: hidden;
+		overflow-y: auto;
+		border: 1px solid #a9a9a9;
+		background-color: #ffffff;
+		white-space: nowrap;
+	}
+
+	.materialComboOption{
+		min-height: 20px;
+		padding: 2px 5px;
+		color: #000000;
+		line-height: 20px;
+		cursor: pointer;
+	}
+
+	.materialComboOption:hover{
+		background-color: #1e6bd6;
+		color: #ffffff;
+	}
+
 	.typeAttrTable input,select{
 		width: 100px;
 	}
@@ -166,6 +235,300 @@
 <%
 %>
 <script type="text/javascript">
+	var materialLinkageData = [];
+	var materialCategoryAttrName = "horn_MaterialCategories";
+	var materialSubTypeAttrName = "horn_MaterialSubType";
+
+	/* 页面进入时调用材质联动接口，并在当前页面缓存结果。 */
+	function loadMaterialLinkageData(){
+		try{
+			var options = {
+				asynchronous: false,
+				parameters: {
+					actionType : "getMaterialLinkageData"
+				}
+			};
+			var url = "netmarkets/jsp/ext/gwc/part/createpart/ajaxHandler.jsp";
+			var response = requestHandler.doRequest(url, options);
+			var responseJson = JSON.parse(response.responseText);
+			if(responseJson && responseJson.success && responseJson.data){
+				materialLinkageData = responseJson.data;
+			}else if(window.console && window.console.warn){
+				window.console.warn("材质联动数据加载失败：" + (responseJson ? responseJson.message : "接口无返回"));
+			}
+		}catch(e){
+			materialLinkageData = [];
+			if(window.console && window.console.warn){
+				window.console.warn("loadMaterialLinkageData: " + e);
+			}
+		}
+	}
+
+	function getUniqueMaterialValues(attrName, categoryValue){
+		var values = [];
+		var valueMap = {};
+		for(var i = 0; i < materialLinkageData.length; i++){
+			var item = materialLinkageData[i];
+			if(categoryValue !== null && categoryValue !== undefined
+					&& item[materialCategoryAttrName] != categoryValue){
+				continue;
+			}
+			var value = item[attrName];
+			if(value !== null && value !== undefined && value !== "" && !valueMap[value]){
+				valueMap[value] = true;
+				values.push(value);
+			}
+		}
+		return values;
+	}
+
+	function fillMaterialDropdown(dropdown, values){
+		while(dropdown.firstChild){
+			dropdown.removeChild(dropdown.firstChild);
+		}
+		for(var i = 0; i < values.length; i++){
+			var option = document.createElement("div");
+			option.className = "materialComboOption";
+			option.setAttribute("data-value", values[i]);
+			if(option.textContent !== undefined){
+				option.textContent = values[i];
+			}else{
+				option.innerText = values[i];
+			}
+			option.onclick = function(event){
+				if(dropdown.materialSelectHandler){
+					dropdown.materialSelectHandler(this.getAttribute("data-value"));
+				}
+				event = event || window.event;
+				if(event.stopPropagation){
+					event.stopPropagation();
+				}else{
+					event.cancelBubble = true;
+				}
+			};
+			dropdown.appendChild(option);
+		}
+	}
+
+	function getMaterialAttrControl(attrTable, attrName){
+		var controls = attrTable.querySelectorAll("[seq]");
+		for(var i = 0; i < controls.length; i++){
+			if(controls[i].getAttribute("id") == attrName){
+				return controls[i];
+			}
+		}
+		return null;
+	}
+
+	function copyMaterialControlAttributes(source, target){
+		var attrsToCopy = ["id", "name", "seq", "attrDataType", "attrDefaultValue", "required", "unit"];
+		for(var i = 0; i < attrsToCopy.length; i++){
+			var attrValue = source.getAttribute(attrsToCopy[i]);
+			if(attrValue !== null){
+				target.setAttribute(attrsToCopy[i], attrValue);
+			}
+		}
+		target.className = source.className;
+		target.style.cssText = source.style.cssText;
+	}
+
+	/* 将原属性控件增强为一个边框内同时支持输入和下拉选择的控件。 */
+	function createMaterialCombobox(control){
+		var input = control;
+		var currentValue = control.value || "";
+		if(control.tagName == "SELECT"){
+			input = document.createElement("input");
+			input.setAttribute("type", "text");
+			copyMaterialControlAttributes(control, input);
+			input.value = currentValue;
+			control.parentNode.replaceChild(input, control);
+		}
+		input.setAttribute("autocomplete", "off");
+
+		var wrapper = input.parentNode;
+		var arrow = null;
+		var dropdown = null;
+		if(wrapper && wrapper.getAttribute
+				&& wrapper.getAttribute("data-material-combobox") == "true"){
+			arrow = wrapper.querySelector("[data-material-arrow='true']");
+			dropdown = wrapper.querySelector("[data-material-dropdown='true']");
+		}else{
+			var parent = input.parentNode;
+			wrapper = document.createElement("span");
+			wrapper.className = "materialCombobox";
+			wrapper.setAttribute("data-material-combobox", "true");
+			parent.insertBefore(wrapper, input);
+			wrapper.appendChild(input);
+
+			arrow = document.createElement("span");
+			arrow.className = "materialComboArrow";
+			arrow.setAttribute("data-material-arrow", "true");
+			arrow.setAttribute("tabindex", "0");
+			arrow.innerHTML = "&#9662;";
+			wrapper.appendChild(arrow);
+
+			dropdown = document.createElement("div");
+			dropdown.className = "materialComboDropdown";
+			dropdown.setAttribute("data-material-dropdown", "true");
+			wrapper.appendChild(dropdown);
+		}
+		return {wrapper: wrapper, input: input, arrow: arrow, dropdown: dropdown};
+	}
+
+	function getMaterialDropdown(input){
+		var wrapper = input ? input.parentNode : null;
+		if(!wrapper || !wrapper.querySelector){
+			return null;
+		}
+		return wrapper.querySelector("[data-material-dropdown='true']");
+	}
+
+	function hideMaterialDropdowns(exceptDropdown){
+		var dropdowns = document.querySelectorAll("[data-material-dropdown='true']");
+		for(var i = 0; i < dropdowns.length; i++){
+			if(dropdowns[i] != exceptDropdown){
+				dropdowns[i].style.display = "none";
+			}
+		}
+	}
+
+	function refreshMaterialSubTypeOptions(seq){
+		var attrTable = document.getElementById("clsAttrTable" + seq);
+		if(!attrTable){
+			return;
+		}
+		var categoryInput = getMaterialAttrControl(attrTable, materialCategoryAttrName);
+		var subTypeInput = getMaterialAttrControl(attrTable, materialSubTypeAttrName);
+		var subTypeDropdown = getMaterialDropdown(subTypeInput);
+		if(!categoryInput || !subTypeInput || !subTypeDropdown){
+			return;
+		}
+		var subTypes = [];
+		if(categoryInput.value !== ""){
+			subTypes = getUniqueMaterialValues(materialSubTypeAttrName, categoryInput.value);
+		}
+		fillMaterialDropdown(subTypeDropdown, subTypes);
+	}
+
+	function bindMaterialCombobox(widget, valueChanged){
+		widget.dropdown.materialSelectHandler = function(value){
+			widget.input.value = value;
+			widget.input.setAttribute("attrDefaultValue", "");
+			widget.dropdown.style.display = "none";
+			if(valueChanged){
+				valueChanged();
+			}
+			if(widget.input.focus){
+				widget.input.focus();
+			}
+		};
+
+		if(widget.input.getAttribute("materialValueBound") != "true"){
+			var inputChanged = function(){
+				widget.input.setAttribute("attrDefaultValue", "");
+				if(valueChanged){
+					valueChanged();
+				}
+			};
+			if(widget.input.addEventListener){
+				widget.input.addEventListener("input", inputChanged, false);
+			}else if(widget.input.attachEvent){
+				widget.input.attachEvent("onkeyup", inputChanged);
+			}
+			widget.input.setAttribute("materialValueBound", "true");
+		}
+
+		if(widget.arrow.getAttribute("materialDropdownBound") != "true"){
+			var toggleDropdown = function(event){
+				event = event || window.event;
+				var willOpen = widget.dropdown.style.display != "block";
+				hideMaterialDropdowns(willOpen ? widget.dropdown : null);
+				widget.dropdown.style.display = willOpen && widget.dropdown.firstChild ? "block" : "none";
+				if(event.stopPropagation){
+					event.stopPropagation();
+				}else{
+					event.cancelBubble = true;
+				}
+			};
+			var arrowKeydown = function(event){
+				event = event || window.event;
+				var keyCode = event.keyCode || event.which;
+				if(keyCode == 13 || keyCode == 32 || keyCode == 40){
+					toggleDropdown(event);
+				}
+			};
+			if(widget.arrow.addEventListener){
+				widget.arrow.addEventListener("click", toggleDropdown, false);
+				widget.arrow.addEventListener("keydown", arrowKeydown, false);
+			}else if(widget.arrow.attachEvent){
+				widget.arrow.attachEvent("onclick", toggleDropdown);
+				widget.arrow.attachEvent("onkeydown", arrowKeydown);
+			}
+			widget.arrow.setAttribute("materialDropdownBound", "true");
+		}
+
+		if(widget.wrapper.getAttribute("materialOutsideClickBound") != "true"){
+			var hideOnOutsideClick = function(event){
+				event = event || window.event;
+				var target = event.target || event.srcElement;
+				if(!widget.wrapper.contains(target)){
+					widget.dropdown.style.display = "none";
+				}
+			};
+			if(document.addEventListener){
+				document.addEventListener("click", hideOnOutsideClick, false);
+			}else if(document.attachEvent){
+				document.attachEvent("onclick", hideOnOutsideClick);
+			}
+			widget.wrapper.setAttribute("materialOutsideClickBound", "true");
+		}
+	}
+
+	/*
+	 * 将两个属性增强为可输入、可下拉选择的组合框。
+	 * 细分类型的候选项始终按当前材质大类过滤，大类输入或选择变化时清空旧值。
+	 */
+	function initializeMaterialComboboxes(seq){
+		var attrTable = document.getElementById("clsAttrTable" + seq);
+		if(!attrTable){
+			return;
+		}
+		var categoryControl = getMaterialAttrControl(attrTable, materialCategoryAttrName);
+		var subTypeControl = getMaterialAttrControl(attrTable, materialSubTypeAttrName);
+		if(!categoryControl || !subTypeControl){
+			return;
+		}
+
+		var categoryValue = categoryControl.value || "";
+		var subTypeValue = subTypeControl.value || "";
+		var categoryWidget = createMaterialCombobox(categoryControl);
+		var subTypeWidget = createMaterialCombobox(subTypeControl);
+		var categoryInput = categoryWidget.input;
+		var subTypeInput = subTypeWidget.input;
+
+		categoryInput.value = categoryValue;
+		subTypeInput.value = subTypeValue;
+		fillMaterialDropdown(categoryWidget.dropdown,
+				getUniqueMaterialValues(materialCategoryAttrName, null));
+		refreshMaterialSubTypeOptions(seq);
+
+		bindMaterialCombobox(subTypeWidget, null);
+		bindMaterialCombobox(categoryWidget, function(){
+			var currentSeq = categoryInput.getAttribute("seq");
+			var currentTable = document.getElementById("clsAttrTable" + currentSeq);
+			var currentSubType = currentTable
+					? getMaterialAttrControl(currentTable, materialSubTypeAttrName) : null;
+			if(currentSubType){
+				currentSubType.value = "";
+				/* 提交逻辑会在空值时回退默认值，因此大类变化后同步清空默认值。 */
+				currentSubType.setAttribute("attrDefaultValue", "");
+			}
+			refreshMaterialSubTypeOptions(currentSeq);
+		});
+	}
+
+	loadMaterialLinkageData();
+
 	var x=screen.width+8;
 	var y=screen.height+8-30;
 	var xx=-4;
@@ -552,6 +915,7 @@
 
 				//必需在clsAttr更改之后再进行更改
 				clsAttrTable.setAttribute("id","clsAttrTable"+changeNum);
+				initializeMaterialComboboxes(changeNum);
 			}
 
 			var partSoftType = document.querySelector("[name=partSoftType"+r+"]");
