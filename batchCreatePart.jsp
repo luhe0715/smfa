@@ -236,8 +236,10 @@
 %>
 <script type="text/javascript">
 	var materialLinkageData = [];
+	var materialClassificationDataName = "classification";
 	var materialCategoryAttrName = "horn_MaterialCategories";
 	var materialSubTypeAttrName = "horn_MaterialSubType";
+	var materialColorDataName = "colorNumber";
 
 	/* 页面进入时调用材质联动接口，并在当前页面缓存结果。 */
 	function loadMaterialLinkageData(){
@@ -264,13 +266,73 @@
 		}
 	}
 
-	function getUniqueMaterialValues(attrName, categoryValue){
+	function normalizeMaterialClassification(value){
+		return String(value || "").replace(/^\s+|\s+$/g, "")
+				.replace(/\s+/g, "").toLowerCase();
+	}
+
+	function addMaterialClassificationCandidate(values, valueMap, value){
+		var rawValue = String(value || "").replace(/^\s+|\s+$/g, "");
+		if(rawValue === ""){
+			return;
+		}
+		var candidates = [rawValue];
+		var codeMatches = rawValue.match(/[a-z]+\d{4}/ig);
+		if(codeMatches){
+			for(var codeIndex = 0; codeIndex < codeMatches.length; codeIndex++){
+				candidates.push(codeMatches[codeIndex]);
+			}
+		}
+		var displayNameWithoutCode = rawValue.replace(
+				/^\s*[a-z]+\d{4}\s*[-_－—:：]?\s*/i, "");
+		if(displayNameWithoutCode != rawValue){
+			candidates.push(displayNameWithoutCode);
+		}
+		for(var i = 0; i < candidates.length; i++){
+			var normalizedValue = normalizeMaterialClassification(candidates[i]);
+			if(normalizedValue !== "" && !valueMap["$" + normalizedValue]){
+				valueMap["$" + normalizedValue] = true;
+				values.push(normalizedValue);
+			}
+		}
+	}
+
+	function getSelectedMaterialClassifications(seq){
+		var values = [];
+		var valueMap = {};
+		var clsNameInput = document.getElementById("clsName" + seq);
+		var clsDisplayNameInput = document.getElementById("clsDisplayName" + seq);
+		addMaterialClassificationCandidate(values, valueMap,
+				clsNameInput ? clsNameInput.value : "");
+		addMaterialClassificationCandidate(values, valueMap,
+				clsDisplayNameInput ? clsDisplayNameInput.value : "");
+		return values;
+	}
+
+	function matchesMaterialClassification(itemClassification, classificationValues){
+		var normalizedItemClassification = normalizeMaterialClassification(itemClassification);
+		for(var i = 0; i < classificationValues.length; i++){
+			if(classificationValues[i] == normalizedItemClassification){
+				return true;
+			}
+		}
+		return false;
+	}
+
+	function getUniqueMaterialValues(attrName, classificationValues, categoryValue, subTypeValue){
 		var values = [];
 		var valueMap = {};
 		for(var i = 0; i < materialLinkageData.length; i++){
 			var item = materialLinkageData[i];
+			if(!matchesMaterialClassification(item[materialClassificationDataName], classificationValues)){
+				continue;
+			}
 			if(categoryValue !== null && categoryValue !== undefined
 					&& item[materialCategoryAttrName] != categoryValue){
+				continue;
+			}
+			if(subTypeValue !== null && subTypeValue !== undefined
+					&& item[materialSubTypeAttrName] != subTypeValue){
 				continue;
 			}
 			var value = item[attrName];
@@ -320,8 +382,46 @@
 		return null;
 	}
 
+	function getMaterialColorAttrControl(attrTable){
+		var markedControl = attrTable.querySelector("[data-material-color-control='true']");
+		if(markedControl){
+			return markedControl;
+		}
+		var controls = attrTable.querySelectorAll("[seq]");
+		for(var i = 0; i < controls.length; i++){
+			var attrName = String(controls[i].getAttribute("id") || "");
+			if(/_en$/i.test(attrName)){
+				continue;
+			}
+			var normalizedName = attrName.replace(/[^a-z0-9]/gi, "").toLowerCase();
+			if(normalizedName == "horncolornumber"
+					|| normalizedName == "horncolorno"
+					|| normalizedName == "horncolorcode"
+					|| normalizedName == "horncolournumber"
+					|| normalizedName == "horncolourno"
+					|| normalizedName == "horncolourcode"
+					|| normalizedName == "hornmaterialcolornumber"
+					|| normalizedName == "hornmaterialcolorno"
+					|| normalizedName == "hornmaterialcolorcode"
+					|| normalizedName == "hornmaterialcolournumber"
+					|| normalizedName == "hornmaterialcolourno"
+					|| normalizedName == "hornmaterialcolourcode"){
+				return controls[i];
+			}
+		}
+		return null;
+	}
+
+	function clearMaterialControl(control){
+		if(control){
+			control.value = "";
+			control.setAttribute("attrDefaultValue", "");
+		}
+	}
+
 	function copyMaterialControlAttributes(source, target){
-		var attrsToCopy = ["id", "name", "seq", "attrDataType", "attrDefaultValue", "required", "unit"];
+		var attrsToCopy = ["id", "name", "seq", "attrDataType", "attrDefaultValue", "required", "unit",
+				"data-material-color-control"];
 		for(var i = 0; i < attrsToCopy.length; i++){
 			var attrValue = source.getAttribute(attrsToCopy[i]);
 			if(attrValue !== null){
@@ -405,9 +505,30 @@
 		}
 		var subTypes = [];
 		if(categoryInput.value !== ""){
-			subTypes = getUniqueMaterialValues(materialSubTypeAttrName, categoryInput.value);
+			subTypes = getUniqueMaterialValues(materialSubTypeAttrName,
+					getSelectedMaterialClassifications(seq), categoryInput.value, null);
 		}
 		fillMaterialDropdown(subTypeDropdown, subTypes);
+	}
+
+	function refreshMaterialColorOptions(seq){
+		var attrTable = document.getElementById("clsAttrTable" + seq);
+		if(!attrTable){
+			return;
+		}
+		var categoryInput = getMaterialAttrControl(attrTable, materialCategoryAttrName);
+		var subTypeInput = getMaterialAttrControl(attrTable, materialSubTypeAttrName);
+		var colorInput = getMaterialColorAttrControl(attrTable);
+		var colorDropdown = getMaterialDropdown(colorInput);
+		if(!categoryInput || !subTypeInput || !colorInput || !colorDropdown){
+			return;
+		}
+		var colors = [];
+		if(categoryInput.value !== "" && subTypeInput.value !== ""){
+			colors = getUniqueMaterialValues(materialColorDataName,
+					getSelectedMaterialClassifications(seq), categoryInput.value, subTypeInput.value);
+		}
+		fillMaterialDropdown(colorDropdown, colors);
 	}
 
 	function bindMaterialCombobox(widget, valueChanged){
@@ -485,8 +606,8 @@
 	}
 
 	/*
-	 * 将两个属性增强为可输入、可下拉选择的组合框。
-	 * 细分类型的候选项始终按当前材质大类过滤，大类输入或选择变化时清空旧值。
+	 * 将材质大类、材质细分类型和色号增强为可输入、可下拉选择的组合框。
+	 * 候选项按“当前分类 -> 材质大类 -> 材质细分类型 -> 色号”逐级过滤。
 	 */
 	function initializeMaterialComboboxes(seq){
 		var attrTable = document.getElementById("clsAttrTable" + seq);
@@ -495,35 +616,52 @@
 		}
 		var categoryControl = getMaterialAttrControl(attrTable, materialCategoryAttrName);
 		var subTypeControl = getMaterialAttrControl(attrTable, materialSubTypeAttrName);
+		var colorControl = getMaterialColorAttrControl(attrTable);
 		if(!categoryControl || !subTypeControl){
 			return;
 		}
 
 		var categoryValue = categoryControl.value || "";
 		var subTypeValue = subTypeControl.value || "";
+		var colorValue = colorControl ? (colorControl.value || "") : "";
 		var categoryWidget = createMaterialCombobox(categoryControl);
 		var subTypeWidget = createMaterialCombobox(subTypeControl);
+		var colorWidget = colorControl ? createMaterialCombobox(colorControl) : null;
 		var categoryInput = categoryWidget.input;
 		var subTypeInput = subTypeWidget.input;
+		var colorInput = colorWidget ? colorWidget.input : null;
 
 		categoryInput.value = categoryValue;
 		subTypeInput.value = subTypeValue;
+		if(colorInput){
+			colorInput.value = colorValue;
+		}
 		fillMaterialDropdown(categoryWidget.dropdown,
-				getUniqueMaterialValues(materialCategoryAttrName, null));
+				getUniqueMaterialValues(materialCategoryAttrName,
+						getSelectedMaterialClassifications(seq), null, null));
 		refreshMaterialSubTypeOptions(seq);
+		refreshMaterialColorOptions(seq);
 
-		bindMaterialCombobox(subTypeWidget, null);
+		if(colorWidget){
+			bindMaterialCombobox(colorWidget, null);
+		}
+		bindMaterialCombobox(subTypeWidget, function(){
+			var currentSeq = subTypeInput.getAttribute("seq");
+			var currentTable = document.getElementById("clsAttrTable" + currentSeq);
+			clearMaterialControl(currentTable ? getMaterialColorAttrControl(currentTable) : null);
+			refreshMaterialColorOptions(currentSeq);
+		});
 		bindMaterialCombobox(categoryWidget, function(){
 			var currentSeq = categoryInput.getAttribute("seq");
 			var currentTable = document.getElementById("clsAttrTable" + currentSeq);
 			var currentSubType = currentTable
 					? getMaterialAttrControl(currentTable, materialSubTypeAttrName) : null;
-			if(currentSubType){
-				currentSubType.value = "";
-				/* 提交逻辑会在空值时回退默认值，因此大类变化后同步清空默认值。 */
-				currentSubType.setAttribute("attrDefaultValue", "");
-			}
+			var currentColor = currentTable ? getMaterialColorAttrControl(currentTable) : null;
+			/* 提交逻辑会在空值时回退默认值，因此变化时同步清空默认值。 */
+			clearMaterialControl(currentSubType);
+			clearMaterialControl(currentColor);
 			refreshMaterialSubTypeOptions(currentSeq);
+			refreshMaterialColorOptions(currentSeq);
 		});
 	}
 

@@ -26,28 +26,34 @@ if("getClsAttrs".equals(actionType)){
 	out.write("@'state':'查询成功','message':"+jsonStr+"@");
 }else if("getMaterialLinkageData".equals(actionType)){
 	/*
-	 * 材质联动模拟接口。
-	 * 后台正式接口完成后，仅需将此分支替换为真实查询，前端继续使用相同返回结构。
+	 * 材质三级联动模拟接口，数据结构依次为：分类、材质大类、材质细分类型、色号。
+	 * 这里只保留 Excel 中少量代表性案例；R1110 的 5 个材质大类全部保留，用于验证分类过滤。
 	 */
 	String[][] mockMaterialData = new String[][]{
-		{"PP", "PP3015"},
-		{"PP", "PP242"},
-		{"PA", "PA6 1010C2"},
-		{"PA", "PA66101F"},
-		{"ABS", "ABS 757"},
-		{"ABS", "ABS757"},
-		{"PC", "PC2805"},
-		{"PC", "PC 2805"},
-		{"单粉卡", "200g单粉卡"},
-		{"单粉卡", "300g单粉卡"},
-		{"铜版纸", "128g铜版纸(双铜)"},
-		{"铜版纸", "157g铜版纸(双铜)"}
+		{"R1110", "K=K (BC坑)", "", ""},
+		{"R1110", "单坑(B坑)", "", ""},
+		{"R1110", "K3K（E坑）", "", ""},
+		{"R1110", "A3B", "", ""},
+		{"R1110", "B3B", "", ""},
+		{"头戴耳机", "PP", "台塑 PP 3015", ""},
+		{"头戴耳机", "PC+ABS", "亚仑 PC+ABS AL3620", "BK296"},
+		{"头戴耳机", "PC+ABS", "SABIC PC+ABS CY4000M", "7M2B2242"},
+		{"头戴耳机", "PC+ABS", "SABIC PC+ABS CY4000M", "7M1A4447"},
+		{"头戴耳机", "ABS", "奇美 ABS 757", "WT1"},
+		{"头戴耳机", "ABS", "奇美 ABS 757", "GY27"},
+		{"TWS耳机", "PC+ABS", "金发 PC+ABS Jh960-6965", "6965 C2B-G1689"},
+		{"TWS耳机", "PC+ABS", "LG PC+ABS  GN5001RFZ", "Y0700"},
+		{"TWS耳机", "PC+ABS", "LG PC+ABS  GN5001RFZ", "R2060"},
+		{"TWS耳机", "PC", "SABIC PC EXL1414", "7G7B4680"},
+		{"Dongle", "ABS", "奇美 ABS 757", "BK26"}
 	};
 	JSONArray data = new JSONArray();
 	for(int i = 0; i < mockMaterialData.length; i++){
 		JSONObject item = new JSONObject();
-		item.put("horn_MaterialCategories", mockMaterialData[i][0]);
-		item.put("horn_MaterialSubType", mockMaterialData[i][1]);
+		item.put("classification", mockMaterialData[i][0]);
+		item.put("horn_MaterialCategories", mockMaterialData[i][1]);
+		item.put("horn_MaterialSubType", mockMaterialData[i][2]);
+		item.put("colorNumber", mockMaterialData[i][3]);
 		data.add(item);
 	}
 	JSONObject result = new JSONObject();

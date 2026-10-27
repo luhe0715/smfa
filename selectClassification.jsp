@@ -99,7 +99,12 @@ function selectItemsReturn(){
 							if(error){
 								alert(error);								
 							}else{
-								partNameObj.value=	jsonObj.lwcTypePropruleForAutoNaming;	
+								var autoNamingValue = jsonObj.lwcTypePropruleForAutoNaming;
+								/* 未配置自动命名内容时保留用户已填写的物料名称，避免被空值覆盖。 */
+								if(autoNamingValue !== null && autoNamingValue !== undefined
+										&& String(autoNamingValue).replace(/^\s+|\s+$/g, "") !== ""){
+									partNameObj.value = autoNamingValue;
+								}
 								var isEdit = jsonObj.lwcTypePropenforceAutoNamingRule;		
 								if("true"  == isEdit){
 									partNameObj.readOnly=true;
@@ -148,6 +153,30 @@ function setClsAttrs(clsName, clsDisplayName){
 	}
 }
 
+/* 色号的内部名由分类属性动态返回；同时兼容常见内部名和中英文显示名称。 */
+function isMaterialColorClassificationAttr(attrName, attrDisplayName){
+	var normalizedName = String(attrName || "")
+			.replace(/_en$/i, "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+	var normalizedDisplayName = String(attrDisplayName || "")
+			.replace(/[\s:：*]/g, "").toLowerCase();
+	return normalizedName == "horncolornumber"
+			|| normalizedName == "horncolorno"
+			|| normalizedName == "horncolorcode"
+			|| normalizedName == "horncolournumber"
+			|| normalizedName == "horncolourno"
+			|| normalizedName == "horncolourcode"
+			|| normalizedName == "hornmaterialcolornumber"
+			|| normalizedName == "hornmaterialcolorno"
+			|| normalizedName == "hornmaterialcolorcode"
+			|| normalizedName == "hornmaterialcolournumber"
+			|| normalizedName == "hornmaterialcolourno"
+			|| normalizedName == "hornmaterialcolourcode"
+			|| normalizedDisplayName == "色号"
+			|| normalizedDisplayName == "colornumber"
+			|| normalizedDisplayName == "colorno"
+			|| normalizedDisplayName == "colorcode";
+}
+
 /*
  * 分类属性由所选分类动态返回。中文属性内部名为 horn_xxx，
  * 对应英文属性内部名为 horn_xxx_en；按内部名动态配对，不依赖显示名称。
@@ -155,26 +184,49 @@ function setClsAttrs(clsName, clsDisplayName){
 function getPairedClassificationAttrKeys(dataJson){
 	var sourceKeys = [];
 	var configuredKeys = dataJson["attrNamesAry"];
+	var sourceKeyMap = {};
 	var pairByBaseName = {};
 	var baseNameOrder = [];
 	var orderedKeys = [];
+	var hasMaterialAttr = false;
 
 	/* 接口提供属性顺序时优先使用；否则使用本次分类数据中的属性顺序。 */
 	if(configuredKeys && configuredKeys.length){
 		for(var configuredIndex = 0; configuredIndex < configuredKeys.length; configuredIndex++){
-			if(dataJson[configuredKeys[configuredIndex]]){
-				sourceKeys.push(configuredKeys[configuredIndex]);
+			var configuredKey = configuredKeys[configuredIndex];
+			var configuredAttrArray = dataJson[configuredKey];
+			if(configuredAttrArray && configuredAttrArray.length
+					&& configuredAttrArray[0]["attrName"] && !sourceKeyMap["$" + configuredKey]){
+				sourceKeys.push(configuredKey);
+				sourceKeyMap["$" + configuredKey] = true;
 			}
 		}
-	}else{
-		for(var key in dataJson){
-			if(dataJson.hasOwnProperty && !dataJson.hasOwnProperty(key)){
-				continue;
-			}
-			var candidateArray = dataJson[key];
-			if(candidateArray && candidateArray.length && candidateArray[0]["attrName"]){
-				sourceKeys.push(key);
-			}
+	}
+	/* attrNamesAry 可能不完整，继续补入当前分类实际返回的其余属性。 */
+	for(var key in dataJson){
+		if(dataJson.hasOwnProperty && !dataJson.hasOwnProperty(key)){
+			continue;
+		}
+		var candidateArray = dataJson[key];
+		if(candidateArray && candidateArray.length && candidateArray[0]["attrName"]
+				&& !sourceKeyMap["$" + key]){
+			sourceKeys.push(key);
+			sourceKeyMap["$" + key] = true;
+		}
+	}
+
+	/* “材质大类/材质细分类型/色号”仅在当前分类包含“材质”属性时显示。 */
+	for(var sourceIndex = 0; sourceIndex < sourceKeys.length; sourceIndex++){
+		var sourceAttrArray = dataJson[sourceKeys[sourceIndex]];
+		if(!sourceAttrArray || !sourceAttrArray.length){
+			continue;
+		}
+		var sourceAttrName = sourceAttrArray[0]["attrName"] || sourceKeys[sourceIndex];
+		var sourceBaseName = /_en$/i.test(sourceAttrName)
+				? sourceAttrName.substring(0, sourceAttrName.length - 3) : sourceAttrName;
+		if(sourceBaseName.toLowerCase() == "horn_material"){
+			hasMaterialAttr = true;
+			break;
 		}
 	}
 
@@ -186,10 +238,25 @@ function getPairedClassificationAttrKeys(dataJson){
 		var attrName = attrArray[0]["attrName"] || sourceKeys[i];
 		var isEnglish = /_en$/i.test(attrName);
 		var baseName = isEnglish ? attrName.substring(0, attrName.length - 3) : attrName;
-		var baseNameKey = "$" + baseName.toLowerCase();
+		var normalizedBaseName = baseName.toLowerCase();
+		var attrDisplayName = attrArray[0]["attrDisplayName"] || "";
+		if(!hasMaterialAttr && (normalizedBaseName == "horn_materialcategories"
+				|| normalizedBaseName == "horn_materialsubtype"
+				|| isMaterialColorClassificationAttr(attrName, attrDisplayName))){
+			continue;
+		}
+		var baseNameKey = "$" + normalizedBaseName;
 		if(!pairByBaseName[baseNameKey]){
 			pairByBaseName[baseNameKey] = {};
 			baseNameOrder.push(baseNameKey);
+		}
+		/* 只调整当前分类实际返回的材质属性，整组中英文一起移到末尾。 */
+		if(normalizedBaseName == "horn_materialcategories"){
+			pairByBaseName[baseNameKey].materialOrder = 0;
+		}else if(normalizedBaseName == "horn_materialsubtype"){
+			pairByBaseName[baseNameKey].materialOrder = 1;
+		}else if(isMaterialColorClassificationAttr(attrName, attrDisplayName)){
+			pairByBaseName[baseNameKey].materialOrder = 2;
 		}
 		if(isEnglish){
 			pairByBaseName[baseNameKey].englishKey = sourceKeys[i];
@@ -198,13 +265,32 @@ function getPairedClassificationAttrKeys(dataJson){
 		}
 	}
 
+	var normalBaseNameOrder = [];
+	var materialBaseNameOrder = [[], [], []];
+	for(var pairIndex = 0; pairIndex < baseNameOrder.length; pairIndex++){
+		var pairKey = baseNameOrder[pairIndex];
+		var materialOrder = pairByBaseName[pairKey].materialOrder;
+		if(materialOrder === undefined){
+			normalBaseNameOrder.push(pairKey);
+		}else{
+			materialBaseNameOrder[materialOrder].push(pairKey);
+		}
+	}
+	baseNameOrder = normalBaseNameOrder.concat(materialBaseNameOrder[0],
+			materialBaseNameOrder[1], materialBaseNameOrder[2]);
+
 	for(var j = 0; j < baseNameOrder.length; j++){
 		var attrPair = pairByBaseName[baseNameOrder[j]];
 		if(attrPair.chineseKey){
 			orderedKeys.push(attrPair.chineseKey);
+		}else{
+			orderedKeys.push(null);
 		}
 		if(attrPair.englishKey){
 			orderedKeys.push(attrPair.englishKey);
+		}else{
+			/* 单语言属性补空位，避免后续中英文配对整体错位。 */
+			orderedKeys.push(null);
 		}
 	}
 	return orderedKeys;
@@ -233,6 +319,14 @@ function getHTML(dataJson, seq){
 	var attrKeys = getPairedClassificationAttrKeys(dataJson);
 	for(var keyIndex=0; keyIndex<attrKeys.length; keyIndex++){
 		var key = attrKeys[keyIndex];
+		if(key === null){
+			innerHTML += "<td></td><td></td>";
+			tdNum++;
+			if(tdNum%2 == 0){
+				innerHTML += "</tr><tr>";
+			}
+			continue;
+		}
 		/* 分类属性信息 */
 		var attrName = "";
 		var attrDisplayName = "";
@@ -292,9 +386,14 @@ function getHTML(dataJson, seq){
 			tdStyle = "style=\"color:red;\" ";
 		}
 		
+		var materialLinkageMarker = "";
+		if(!/_en$/i.test(attrName)
+				&& isMaterialColorClassificationAttr(attrName, attrDisplayName)){
+			materialLinkageMarker = " data-material-color-control='true' ";
+		}
 		var htmls = "<td "+tdStyle+">"+attrDisplayName + ":</td><td>";
 		if(ruleTypes.indexOf("DiscreteSetConstraint")>=0){				/* 合法值列表,枚举值列表约束,创建下拉列表 */
-			htmls += "<select name='selectList' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' ";
+			htmls += "<select name='selectList' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' "+materialLinkageMarker;
 			if(ruleTypes.indexOf("ValueRequiredConstraint")>=0){			
 				htmls += "required='required' >  "
 			}else{
@@ -323,7 +422,7 @@ function getHTML(dataJson, seq){
 			}
 			htmls += "</select>"
 		}else if(attrDataType.indexOf("Boolean")>=0){					/* 分类属性类型是布尔值,创建下拉列表 */
-			htmls += "<select name='selectList' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' ";
+			htmls += "<select name='selectList' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' "+materialLinkageMarker;
 			if(ruleTypes.indexOf("ValueRequiredConstraint")>=0){
 				htmls += "required='required' >  "
 			}else{
@@ -337,7 +436,7 @@ function getHTML(dataJson, seq){
 				htmls += "<option value =''> </option> <option value ='false'>否</option> <option value ='true'>是</option>  </select>";
 			}
 		}else{															/* 其余属性类型及约束类型,创建输入框 */
-			htmls += "<input type='text' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' attrDefaultValue='"+attrDefaultValue+"' "; 
+			htmls += "<input type='text' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' attrDefaultValue='"+attrDefaultValue+"' "+materialLinkageMarker;
 			if(attrDefaultValue){
 				htmls += "value='"+attrDefaultValue+"' "
 			}
