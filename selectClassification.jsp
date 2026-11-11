@@ -31,6 +31,7 @@ String seq = request.getParameter("seq");
 	</div>
 	<input type="button" name="selectOK" id="selectOK" class="formTableButton" onclick="selectItemsReturn();" value="确定"/>
 </div>
+<script type="text/javascript" src="netmarkets/jsp/ext/gwc/part/createpart/classificationAttributeOrder.js"></script>
 <script type="text/javascript">
 
 function selectItemsReturn(){
@@ -145,10 +146,10 @@ function setClsAttrs(clsName, clsDisplayName){
 			seqs = seq.split(",");
 			for (var r = 0; r < seqs.length; r++) {
 				seq = seqs[r];
-				getHTML(dataJson, seq);
+				getHTML(dataJson, seq, clsName);
 			}
 		} else {
-			getHTML(dataJson, seq);
+			getHTML(dataJson, seq, clsName);
 		}
 	}
 }
@@ -181,7 +182,7 @@ function isMaterialColorClassificationAttr(attrName, attrDisplayName){
  * 分类属性由所选分类动态返回。中文属性内部名为 horn_xxx，
  * 对应英文属性内部名为 horn_xxx_en；按内部名动态配对，不依赖显示名称。
  */
-function getPairedClassificationAttrKeys(dataJson){
+function getPairedClassificationAttrKeys(dataJson, clsName){
 	var sourceKeys = [];
 	var configuredKeys = dataJson["attrNamesAry"];
 	var sourceKeyMap = {};
@@ -239,6 +240,10 @@ function getPairedClassificationAttrKeys(dataJson){
 		var isEnglish = /_en$/i.test(attrName);
 		var baseName = isEnglish ? attrName.substring(0, attrName.length - 3) : attrName;
 		var normalizedBaseName = baseName.toLowerCase();
+		/* PARTTYPE 是分类技术属性，不在批量创建界面展示或提交。 */
+		if(normalizedBaseName == "parttype"){
+			continue;
+		}
 		var attrDisplayName = attrArray[0]["attrDisplayName"] || "";
 		if(!hasMaterialAttr && (normalizedBaseName == "horn_materialcategories"
 				|| normalizedBaseName == "horn_materialsubtype"
@@ -250,7 +255,7 @@ function getPairedClassificationAttrKeys(dataJson){
 			pairByBaseName[baseNameKey] = {};
 			baseNameOrder.push(baseNameKey);
 		}
-		/* 只调整当前分类实际返回的材质属性，整组中英文一起移到末尾。 */
+		/* 表格未定义的属性沿用现有排列，材质联动字段整组放在这些属性的末尾。 */
 		if(normalizedBaseName == "horn_materialcategories"){
 			pairByBaseName[baseNameKey].materialOrder = 0;
 		}else if(normalizedBaseName == "horn_materialsubtype"){
@@ -279,6 +284,26 @@ function getPairedClassificationAttrKeys(dataJson){
 	baseNameOrder = normalBaseNameOrder.concat(materialBaseNameOrder[0],
 			materialBaseNameOrder[1], materialBaseNameOrder[2]);
 
+	/* 以 classification_odm v1.5 中当前分类的属性行顺序为准。 */
+	var workbookAttrNames = odmClassificationAttributeOrder[clsName] || [];
+	var workbookBaseNameOrder = [];
+	var workbookBaseNameMap = {};
+	for(var workbookIndex = 0; workbookIndex < workbookAttrNames.length; workbookIndex++){
+		var workbookBaseName = workbookAttrNames[workbookIndex].replace(/_en$/i, "").toLowerCase();
+		var workbookPairKey = "$" + workbookBaseName;
+		if(pairByBaseName[workbookPairKey] && !workbookBaseNameMap[workbookPairKey]){
+			workbookBaseNameOrder.push(workbookPairKey);
+			workbookBaseNameMap[workbookPairKey] = true;
+		}
+	}
+	/* 接口多返回的属性追加在表格属性后，避免遗漏服务器新增的属性。 */
+	for(var remainingIndex = 0; remainingIndex < baseNameOrder.length; remainingIndex++){
+		if(!workbookBaseNameMap[baseNameOrder[remainingIndex]]){
+			workbookBaseNameOrder.push(baseNameOrder[remainingIndex]);
+		}
+	}
+	baseNameOrder = workbookBaseNameOrder;
+
 	for(var j = 0; j < baseNameOrder.length; j++){
 		var attrPair = pairByBaseName[baseNameOrder[j]];
 		if(attrPair.chineseKey){
@@ -297,7 +322,7 @@ function getPairedClassificationAttrKeys(dataJson){
 }
 		
 /* 生成html内容 */
-function getHTML(dataJson, seq){
+function getHTML(dataJson, seq, clsName){
 	console.log(dataJson);
 	var table = window.opener.document.getElementById('formTable');
 	var index = 0;
@@ -316,7 +341,7 @@ function getHTML(dataJson, seq){
 	cell.innerHTML = "";							//每次先清空
 	var innerHTML="<table class='clsAttrTable' id='clsAttrTable"+seq+"'><tr>";
 	var tdNum=0;
-	var attrKeys = getPairedClassificationAttrKeys(dataJson);
+	var attrKeys = getPairedClassificationAttrKeys(dataJson, clsName);
 	for(var keyIndex=0; keyIndex<attrKeys.length; keyIndex++){
 		var key = attrKeys[keyIndex];
 		if(key === null){
