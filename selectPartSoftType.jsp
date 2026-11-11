@@ -151,7 +151,6 @@ function getHTML(dataJson, seq){
 		var attrName = "";
 		var attrDisplayName = "";
 		var attrDataType = ""
-		var attrDefaultValue = ""
 		var attrUnit = ""
 		
 		/* 分类属性约束信息 */
@@ -190,16 +189,6 @@ function getHTML(dataJson, seq){
 				ruleValueLength = attrArray[i]["ruleValueLength"];
 			}
 			
-			var attrDefaultValueList = attrArray[i]["attrDefaultValueList"];
-			if("" == attrDefaultValue && attrDefaultValueList.length >0){	//取一次就够了
-				attrDefaultValue = attrDefaultValueList[0];
-// 				for(var j=0; j<attrDefaultValueList.length; j++){			//暂时不考虑多值
-// 					attrDefaultValue += attrDefaultValueList[j];
-// 					if(j<attrDefaultValueList.length-1){
-// 						attrDefaultValue += ",";
-// 					}
-// 				}
-			}
 		}
 		
 		/* 包含必填约束,属性名增加*标识 */
@@ -217,14 +206,13 @@ function getHTML(dataJson, seq){
 			}else{
 				htmls += " >  "
 			}
+			/* 初始留空，必须由用户选择，不自动使用默认值或第一项。 */
+			htmls += "<option value='' selected='selected'></option>";
 			if("" != ruleLegalValues){
 				var legalValues = ruleLegalValues.substring(1,ruleLegalValues.length-1);
 				var values = legalValues.split(",");
 				for(var i=0; i<values.length; i++){
 					var op = "<option value ='"+values[i]+"'>"+values[i]+"</option> ";
-					if(attrDefaultValue && values[i] == attrDefaultValue){
-						op = "<option value ='"+values[i]+"' selected='true'>"+values[i]+"</option> ";
-					}
 					htmls += op;
 				}
 			}else if(null != ruleEnumMap){
@@ -232,9 +220,6 @@ function getHTML(dataJson, seq){
 					var enumName = enumKey;
 					var enumDisplay = ruleEnumMap[enumKey];
 					var op = "<option value ='"+enumName+"'>"+enumDisplay+"</option> ";
-					if(attrDefaultValue && enumName == attrDefaultValue){
-						op = "<option value ='"+enumName+"' selected='true'>"+enumDisplay+"</option> ";
-					}
 					htmls += op;
 				}
 			}
@@ -246,19 +231,10 @@ function getHTML(dataJson, seq){
 			}else{
 				htmls += " >  "
 			}
-			if(attrDefaultValue && attrDefaultValue=="true"){
-				htmls += "<option value ='false'>否</option> <option value ='true' selected='true'>是</option>  </select>";
-			}else if(attrDefaultValue && attrDefaultValue=="false"){
-				htmls += "<option value ='false' selected='true'>否</option> <option value ='true'>是</option>  </select>";
-			}else{
-				htmls += "<option value =''> </option> <option value ='false'>否</option> <option value ='true'>是</option>  </select>";
-			}
+			htmls += "<option value='' selected='selected'></option><option value='false'>否</option><option value='true'>是</option></select>";
 			
 		}else{															/* 其余属性类型及约束类型,创建输入框 */
-			htmls += "<input type='text' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' attrDefaultValue='"+attrDefaultValue+"' "; 
-			if(attrDefaultValue){
-				htmls += "value='"+attrDefaultValue+"' "
-			}
+			htmls += "<input type='text' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' ";
 			var title = "";
 			if(ruleTypes.indexOf("ValueRequiredConstraint")>=0){
 				htmls += "required='required' "

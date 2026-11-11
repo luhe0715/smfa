@@ -190,6 +190,12 @@ function getPairedClassificationAttrKeys(dataJson, clsName){
 	var baseNameOrder = [];
 	var orderedKeys = [];
 	var hasMaterialAttr = false;
+	var hasWorkbookConfig = Object.prototype.hasOwnProperty.call(odmClassificationAttributeOrder, clsName);
+	var workbookAttrNames = hasWorkbookConfig ? odmClassificationAttributeOrder[clsName] : [];
+	var workbookAttrMap = {};
+	for(var allowedIndex = 0; allowedIndex < workbookAttrNames.length; allowedIndex++){
+		workbookAttrMap["$" + workbookAttrNames[allowedIndex].toLowerCase()] = true;
+	}
 
 	/* 接口提供属性顺序时优先使用；否则使用本次分类数据中的属性顺序。 */
 	if(configuredKeys && configuredKeys.length){
@@ -216,7 +222,7 @@ function getPairedClassificationAttrKeys(dataJson, clsName){
 		}
 	}
 
-	/* “材质大类/材质细分类型/色号”仅在当前分类包含“材质”属性时显示。 */
+	/* 未收录在表格中的分类保留原接口逻辑；已收录分类逐字段按表格过滤。 */
 	for(var sourceIndex = 0; sourceIndex < sourceKeys.length; sourceIndex++){
 		var sourceAttrArray = dataJson[sourceKeys[sourceIndex]];
 		if(!sourceAttrArray || !sourceAttrArray.length){
@@ -244,8 +250,12 @@ function getPairedClassificationAttrKeys(dataJson, clsName){
 		if(normalizedBaseName == "parttype"){
 			continue;
 		}
+		/* 包括继承/接口额外返回的属性：表格未配置就不生成控件，也不提交。 */
+		if(hasWorkbookConfig && !workbookAttrMap["$" + attrName.toLowerCase()]){
+			continue;
+		}
 		var attrDisplayName = attrArray[0]["attrDisplayName"] || "";
-		if(!hasMaterialAttr && (normalizedBaseName == "horn_materialcategories"
+		if(!hasWorkbookConfig && !hasMaterialAttr && (normalizedBaseName == "horn_materialcategories"
 				|| normalizedBaseName == "horn_materialsubtype"
 				|| isMaterialColorClassificationAttr(attrName, attrDisplayName))){
 			continue;
@@ -285,7 +295,6 @@ function getPairedClassificationAttrKeys(dataJson, clsName){
 			materialBaseNameOrder[1], materialBaseNameOrder[2]);
 
 	/* 以 classification_odm v1.5 中当前分类的属性行顺序为准。 */
-	var workbookAttrNames = odmClassificationAttributeOrder[clsName] || [];
 	var workbookBaseNameOrder = [];
 	var workbookBaseNameMap = {};
 	for(var workbookIndex = 0; workbookIndex < workbookAttrNames.length; workbookIndex++){
@@ -296,7 +305,7 @@ function getPairedClassificationAttrKeys(dataJson, clsName){
 			workbookBaseNameMap[workbookPairKey] = true;
 		}
 	}
-	/* 接口多返回的属性追加在表格属性后，避免遗漏服务器新增的属性。 */
+	/* 仅对表格未收录的分类保留接口顺序；已收录分类已过滤掉额外属性。 */
 	for(var remainingIndex = 0; remainingIndex < baseNameOrder.length; remainingIndex++){
 		if(!workbookBaseNameMap[baseNameOrder[remainingIndex]]){
 			workbookBaseNameOrder.push(baseNameOrder[remainingIndex]);
@@ -356,7 +365,6 @@ function getHTML(dataJson, seq, clsName){
 		var attrName = "";
 		var attrDisplayName = "";
 		var attrDataType = ""
-		var attrDefaultValue = ""
 		var attrUnit = ""
 		
 		/* 分类属性约束信息 */
@@ -392,16 +400,6 @@ function getHTML(dataJson, seq, clsName){
 				ruleValueLength = attrArray[i]["ruleValueLength"];
 			}
 			
-			var attrDefaultValueList = attrArray[i]["attrDefaultValueList"];
-			if("" == attrDefaultValue && attrDefaultValueList.length >0){	//取一次就够了
-				attrDefaultValue = attrDefaultValueList[0];
-// 				for(var j=0; j<attrDefaultValueList.length; j++){			//暂时不考虑多值
-// 					attrDefaultValue += attrDefaultValueList[j];
-// 					if(j<attrDefaultValueList.length-1){
-// 						attrDefaultValue += ",";
-// 					}
-// 				}
-			}
 		}
 		
 		/* 包含必填约束,属性名增加*标识 */
@@ -424,14 +422,13 @@ function getHTML(dataJson, seq, clsName){
 			}else{
 				htmls += " >  "
 			}
+			/* 初始留空，必须由用户选择，不自动使用默认值或第一项。 */
+			htmls += "<option value='' selected='selected'></option>";
 			if("" != ruleLegalValues){
 				var legalValues = ruleLegalValues.substring(1,ruleLegalValues.length-1);
 				var values = legalValues.split(",");
 				for(var i=0; i<values.length; i++){
 					var op = "<option value ='"+values[i]+"'>"+values[i]+"</option> ";
-					if(attrDefaultValue && values[i] == attrDefaultValue){
-						op = "<option value ='"+values[i]+"' selected='true'>"+values[i]+"</option> ";
-					}
 					htmls += op;
 				}
 			}else if(null != ruleEnumMap){
@@ -439,9 +436,6 @@ function getHTML(dataJson, seq, clsName){
 					var enumName = enumKey;
 					var enumDisplay = ruleEnumMap[enumKey];
 					var op = "<option value ='"+enumName+"'>"+enumDisplay+"</option> ";
-					if(attrDefaultValue && enumName == attrDefaultValue){
-						op = "<option value ='"+enumName+"' selected='true'>"+enumDisplay+"</option> ";
-					}
 					htmls += op;
 				}
 			}
@@ -453,18 +447,9 @@ function getHTML(dataJson, seq, clsName){
 			}else{
 				htmls += " >  "
 			}
-			if(attrDefaultValue && attrDefaultValue=="true"){
-				htmls += "<option value ='false'>否</option> <option value ='true' selected='true'>是</option>  </select>";
-			}else if(attrDefaultValue && attrDefaultValue=="true"){
-				htmls += "<option value ='false' selected='true'>否</option> <option value ='true'>是</option>  </select>";
-			}else{
-				htmls += "<option value =''> </option> <option value ='false'>否</option> <option value ='true'>是</option>  </select>";
-			}
+			htmls += "<option value='' selected='selected'></option><option value='false'>否</option><option value='true'>是</option></select>";
 		}else{															/* 其余属性类型及约束类型,创建输入框 */
-			htmls += "<input type='text' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' attrDefaultValue='"+attrDefaultValue+"' "+materialLinkageMarker;
-			if(attrDefaultValue){
-				htmls += "value='"+attrDefaultValue+"' "
-			}
+			htmls += "<input type='text' seq='"+seq+"' id='"+attrName+"' attrDataType='"+attrDataType+"' "+materialLinkageMarker;
 			var title = "";
 			if(ruleTypes.indexOf("ValueRequiredConstraint")>=0){
 				htmls += "required='required' "

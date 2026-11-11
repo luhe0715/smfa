@@ -1,5 +1,9 @@
 <%@page import="wt.folder.Folder"%>
-<%@page import="com.ptc.netmarkets.model.NmOid"%>
+<%@page import="wt.fc.Persistable"%>
+<%@page import="wt.fc.ReferenceFactory"%>
+<%@page import="com.ptc.core.components.forms.FolderContextHelper"%>
+<%@page import="com.ptc.core.meta.common.TypeIdentifierHelper"%>
+<%@page import="org.apache.commons.lang.StringEscapeUtils"%>
 <%@ page language="java" contentType="text/html; charset=UTF-8"
 		 pageEncoding="UTF-8"%>
 <%@ include file="/netmarkets/jsp/components/beginWizard.jspf"%>
@@ -11,7 +15,14 @@
 </head>
 <%
 	String baseHref = new wt.httpgw.URLFactory().getBaseHREF();
-	NmOid folderOid = commandBean.getPageOid();
+	/* 使用与标准新建窗口一致的所选/操作上下文，不能仅使用项目页面的 OID。 */
+	commandBean.getParameterMap().put("RedirectDefaultToModifiableFolder", "false");
+	Folder targetFolder = FolderContextHelper.getSelectedOrContextFolder(commandBean,
+			TypeIdentifierHelper.getTypeIdentifier("wt.part.WTPart"));
+	String folderOid = targetFolder == null ? ""
+			: new ReferenceFactory().getReferenceString((Persistable) targetFolder);
+	String targetFolderPath = targetFolder == null ? "未能识别，请从目标文件夹重新打开"
+			: targetFolder.getFolderPath();
 %>
 <style type="text/css">
 	.formTable {
@@ -188,6 +199,7 @@
 <div id="window_body">
 	<div id="header">
 		<br/>
+		<div style="margin-left: 10px; margin-bottom: 8px;">创建位置：<%=StringEscapeUtils.escapeHtml(targetFolderPath)%></div>
 	</div>
 	<div id="main" >
 		<div id="toolbar_top">
@@ -196,7 +208,7 @@
 		<table id="formTable" class="formTable" border="1">
 			<tr>
 				<th>选择</th>
-				<th>物料名称*</th>
+				<th>物料名称</th>
 				<th>类型选择</th>
 				<th>类型属性</th>
 				<th>分类选择*</th>
@@ -204,7 +216,7 @@
 			</tr>
 			<tr id="row1">
 				<td class="seq"><input type="checkbox" id="seq1" name="seq" value="1" /></td>
-				<td class="partName"><input type="text" id="partName1" name="partName1" required="required"/></td>
+				<td class="partName"><input type="text" id="partName1" name="partName1" disabled="disabled" value="自动生成"/></td>
 				<td class="classification">
 					<input type="text" id="partSoftDisplayType1" name="partSoftDisplayType1" disabled="disabled" />
 					<input type="hidden" id="partSoftType1" name="partSoftType1" />
@@ -239,6 +251,7 @@
 	var materialClassificationDataName = "classification";
 	var materialCategoryAttrName = "horn_MaterialCategories";
 	var materialSubTypeAttrName = "horn_MaterialSubType";
+	var materialValueAttrName = "horn_Material";
 	var materialColorDataName = "colorNumber";
 
 	/* 页面进入时调用材质联动接口，并在当前页面缓存结果。 */
@@ -419,6 +432,55 @@
 		}
 	}
 
+	/* 配置了大类和细分类型的分类自动合成材质；其余分类保留手工输入。 */
+	function updateMaterialValue(seq){
+		var attrTable = document.getElementById("clsAttrTable" + seq);
+		if(!attrTable){
+			return;
+		}
+		var categoryInput = getMaterialAttrControl(attrTable, materialCategoryAttrName);
+		var subTypeInput = getMaterialAttrControl(attrTable, materialSubTypeAttrName);
+		var materialInput = getMaterialAttrControl(attrTable, materialValueAttrName);
+		if(!materialInput){
+			return;
+		}
+		/* 材质使用文本框：自动合成时只读，手工填写时可以自由输入。 */
+		if(materialInput.tagName == "SELECT"){
+			var textInput = document.createElement("input");
+			textInput.setAttribute("type", "text");
+			copyMaterialControlAttributes(materialInput, textInput);
+			textInput.value = materialInput.value || "";
+			materialInput.parentNode.replaceChild(textInput, materialInput);
+			materialInput = textInput;
+		}
+		if(!categoryInput || !subTypeInput){
+			materialInput.readOnly = false;
+			if(materialInput.getAttribute("data-material-generated") == "true"){
+				materialInput.removeAttribute("data-material-generated");
+				materialInput.removeAttribute("title");
+				materialInput.style.backgroundColor = "";
+			}
+			return;
+		}
+		materialInput.readOnly = true;
+		materialInput.setAttribute("data-material-generated", "true");
+		materialInput.style.backgroundColor = "#eeeeee";
+		materialInput.setAttribute("title", "由材质大类、材质细分类型和色号自动生成");
+		materialInput.setAttribute("attrDefaultValue", "");
+		var category = String(categoryInput.value || "").replace(/^\s+|\s+$/g, "");
+		var subType = String(subTypeInput.value || "").replace(/^\s+|\s+$/g, "");
+		var values = [];
+		if(category !== "" && subType !== ""){
+			values.push(category, subType);
+			var colorInput = getMaterialColorAttrControl(attrTable);
+			var color = colorInput ? String(colorInput.value || "").replace(/^\s+|\s+$/g, "") : "";
+			if(color !== ""){
+				values.push(color);
+			}
+		}
+		materialInput.value = values.join(",");
+	}
+
 	function copyMaterialControlAttributes(source, target){
 		var attrsToCopy = ["id", "name", "seq", "attrDataType", "attrDefaultValue", "required", "unit",
 				"data-material-color-control"];
@@ -553,6 +615,7 @@
 			};
 			if(widget.input.addEventListener){
 				widget.input.addEventListener("input", inputChanged, false);
+				widget.input.addEventListener("change", inputChanged, false);
 			}else if(widget.input.attachEvent){
 				widget.input.attachEvent("onkeyup", inputChanged);
 			}
@@ -614,6 +677,7 @@
 		if(!attrTable){
 			return;
 		}
+		updateMaterialValue(seq);
 		var categoryControl = getMaterialAttrControl(attrTable, materialCategoryAttrName);
 		var subTypeControl = getMaterialAttrControl(attrTable, materialSubTypeAttrName);
 		var colorControl = getMaterialColorAttrControl(attrTable);
@@ -643,13 +707,16 @@
 		refreshMaterialColorOptions(seq);
 
 		if(colorWidget){
-			bindMaterialCombobox(colorWidget, null);
+			bindMaterialCombobox(colorWidget, function(){
+				updateMaterialValue(colorInput.getAttribute("seq"));
+			});
 		}
 		bindMaterialCombobox(subTypeWidget, function(){
 			var currentSeq = subTypeInput.getAttribute("seq");
 			var currentTable = document.getElementById("clsAttrTable" + currentSeq);
 			clearMaterialControl(currentTable ? getMaterialColorAttrControl(currentTable) : null);
 			refreshMaterialColorOptions(currentSeq);
+			updateMaterialValue(currentSeq);
 		});
 		bindMaterialCombobox(categoryWidget, function(){
 			var currentSeq = categoryInput.getAttribute("seq");
@@ -657,12 +724,14 @@
 			var currentSubType = currentTable
 					? getMaterialAttrControl(currentTable, materialSubTypeAttrName) : null;
 			var currentColor = currentTable ? getMaterialColorAttrControl(currentTable) : null;
-			/* 提交逻辑会在空值时回退默认值，因此变化时同步清空默认值。 */
+			/* 上游选择变化时，清空下游字段，等待用户重新选择。 */
 			clearMaterialControl(currentSubType);
 			clearMaterialControl(currentColor);
 			refreshMaterialSubTypeOptions(currentSeq);
 			refreshMaterialColorOptions(currentSeq);
+			updateMaterialValue(currentSeq);
 		});
+		updateMaterialValue(seq);
 	}
 
 	loadMaterialLinkageData();
@@ -683,6 +752,10 @@
 	function submitTable(){
 		var tableDatas = "";
 		var folderOid = '<%=folderOid%>';
+		if(!folderOid){
+			alert("无法确定创建目录，请关闭窗口后从目标文件夹重新打开批量创建。");
+			return;
+		}
 
 		var table = document.getElementById('formTable');
 		var rowLength = table.rows.length;
@@ -693,10 +766,6 @@
 			var clsName = document.getElementById('clsName'+i).value;
 			var clsDisplayName = document.getElementById('clsDisplayName'+i).value;
 			var partInfo = "{\"partName\":\""+partName+"\",\"clsName\":\""+clsName+"\",\"clsDisplayName\":\""+clsDisplayName+"\","
-			if(""==partName ){
-				alert("请填写物料名称!");
-				return;
-			}
 			if(""==clsDisplayName){
 				alert("请选中物料分类!");
 				return;
@@ -708,6 +777,8 @@
 			}
 			partInfo += "\"partSoftType\":\""+partSoftType+"\",";
 			//add end
+			/* 提交前再同步一次，确保读取到当前选择对应的合成材质。 */
+			updateMaterialValue(i);
 			var clsAttrs = document.querySelectorAll("#clsAttrTable"+i+" [seq]");
 			var clsAttrsNumber = clsAttrs.length;
 			for(var j=0; j<clsAttrsNumber; j++){
@@ -716,7 +787,6 @@
 				var attrValue = "";
 				var attrName = "";
 				var attrDataType = "";
-				var attrDefaultValue = "";
 				if(tagname == 'INPUT'){
 					var input = clsAttrs[j];
 					var typename = input.type;
@@ -724,21 +794,13 @@
 						attrValue = input.value;
 						attrName = input.getAttribute("id");
 						attrDataType = input.getAttribute("attrDataType");
-						attrDefaultValue = input.getAttribute("attrDefaultValue");
-						if(""==attrValue){
-							attrValue = attrDefaultValue;
-						}
 					}
 				}else if(tagname == 'SELECT'){
 					var select = clsAttrs[j];
 					var index = select.selectedIndex;
-					attrValue = select.options[index].value;
+					attrValue = index >= 0 ? select.options[index].value : "";
 					attrName = select.getAttribute("id");
 					attrDataType = select.getAttribute("attrDataType");
-					attrDefaultValue = select.getAttribute("attrDefaultValue");
-					if(""==attrValue){
-						attrValue = attrDefaultValue;
-					}
 				}
 				if(!attrValue){
 					attrValue="";
@@ -764,7 +826,6 @@
 				var attrValue = "";
 				var attrName = "";
 				var attrDataType = "";
-				var attrDefaultValue = "";
 				if(tagname == 'INPUT'){
 					var input = typeAttrs[jj];
 					var typename = input.type;
@@ -772,21 +833,13 @@
 						attrValue = input.value;
 						attrName = input.getAttribute("id");
 						attrDataType = input.getAttribute("attrDataType");
-						attrDefaultValue = input.getAttribute("attrDefaultValue");
-						if(""==attrValue){
-							attrValue = attrDefaultValue;
-						}
 					}
 				}else if(tagname == 'SELECT'){
 					var select = typeAttrs[jj];
 					var index = select.selectedIndex;
-					attrValue = select.options[index].value;
+					attrValue = index >= 0 ? select.options[index].value : "";
 					attrName = select.getAttribute("id");
 					attrDataType = select.getAttribute("attrDataType");
-					attrDefaultValue = select.getAttribute("attrDefaultValue");
-					if(""==attrValue){
-						attrValue = attrDefaultValue;
-					}
 				}
 				var required = typeAttrs[jj].getAttribute("required");
 				if("required"==required && ""==attrValue){
@@ -877,20 +930,27 @@
 
 	/* 选择物料分类 */
 	function chooseClassification(seq){
-		var partTypeObj = document.getElementById("partSoftDisplayType" + seq);
-		if(partTypeObj){
-			var partSoftDisplayType = partTypeObj.value;
-			if(partSoftDisplayType == ""){
-				alert("请先选择类型");
+		/* 多行 seq 为“1,2”，必须逐行取类型，不能当作一个控件 ID。 */
+		var seqs = String(seq).split(",");
+		var partSoftType = null;
+		for(var rowIndex = 0; rowIndex < seqs.length; rowIndex++){
+			var rowSeq = seqs[rowIndex].replace(/^\s+|\s+$/g, "");
+			var displayTypeObj = document.getElementById("partSoftDisplayType" + rowSeq);
+			var typeObj = document.getElementById("partSoftType" + rowSeq);
+			if(!displayTypeObj || !displayTypeObj.value || !typeObj || !typeObj.value){
+				alert("请先为第" + rowSeq + "行选择类型");
 				return false;
 			}
+			if(partSoftType !== null && partSoftType !== typeObj.value){
+				alert("请选择相同类型的行设置分类");
+				return false;
+			}
+			partSoftType = typeObj.value;
+			seqs[rowIndex] = rowSeq;
 		}
-		var partSoftType = "";
-		var partSoftTypeObj = document.getElementById("partSoftType" + seq);
-		if(partSoftTypeObj){
-			partSoftType = partSoftTypeObj.value;
-		}
-		window.open('netmarkets/jsp/ext/gwc/part/createpart/selectClassification.jsp?seq='+seq + '&partSoftType=' + partSoftType,'newwindow','height=600,width=550,top=80,left=350,toolbar=no,menubar=no,scrollbars=no,resizable=no,location=no,status=no');
+		window.open('netmarkets/jsp/ext/gwc/part/createpart/selectClassification.jsp?seq='
+				+ encodeURIComponent(seqs.join(",")) + '&partSoftType=' + encodeURIComponent(partSoftType),
+				'newwindow','height=600,width=550,top=80,left=350,toolbar=no,menubar=no,scrollbars=no,resizable=no,location=no,status=no');
 	}
 
 	/* 增加行 */
@@ -909,7 +969,7 @@
 					cell.innerHTML="<input type='checkbox' id='seq"+rowLength+"' name='seq' value='"+rowLength+"' />";
 				}else if(i==1){
 					cell.className = 'partName';
-					cell.innerHTML="<input type='text' id='partName"+rowLength+"' name='partName"+rowLength+"' required='required' />";
+					cell.innerHTML="<input type='text' id='partName"+rowLength+"' name='partName"+rowLength+"' disabled='disabled' value='自动生成' />";
 				}else if(i==2){
 					cell.className = 'classification';
 					cell.innerHTML="<input type='text' id='partSoftDisplayType"+rowLength+"' name='partSoftDisplayType"+rowLength+"' disabled='disabled' required='required' />"
@@ -973,7 +1033,7 @@
 			var partName = document.getElementById('partName'+box_val[i]);
 			var clsDisplayName = document.getElementById('clsDisplayName'+box_val[i]);
 			var clsName = document.getElementById('clsName'+box_val[i]);
-			partName.value="";
+			partName.value="自动生成";
 			clsDisplayName.value="";
 			clsName.value="";
 			var typeDisplayName = document.getElementById("partSoftDisplayType" + box_val[i]);

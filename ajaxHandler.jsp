@@ -7,7 +7,113 @@
 <%@page import="wt.facade.classification.ClassificationFacade"%>
 <%@page import="org.apache.commons.logging.LogFactory"%>
 <%@page import="org.apache.commons.logging.Log"%>
+<%@page import="com.ptc.netmarkets.model.NmOid"%>
+<%@page import="wt.folder.Folder"%>
+<%@page import="wt.fc.Persistable"%>
+<%@page import="wt.fc.ReferenceFactory"%>
+<%@page import="java.util.Map"%>
+<%@page import="java.util.LinkedHashMap"%>
+<%@page import="ext.pi.core.PIPersistableHelper"%>
+<%@page import="ext.gwc.part.createpart.rule.CreatePartPropUtil"%>
+<%@page import="wt.folder.FolderHelper"%>
+<%@page import="wt.fc.PersistenceHelper"%>
+<%@page import="wt.inf.container.WTContainerRef"%>
+<%@page import="wt.part.WTPart"%>
+<%@page import="wt.part.Source"%>
+<%@page import="wt.part.QuantityUnit"%>
+<%@page import="wt.part.PartType"%>
+<%@page import="wt.pom.Transaction"%>
 <%@ page language="java" isThreadSafe="true" contentType="text/html;charset=UTF-8"%>
+<%!
+private static JSONArray readPartData(String tableDatas) {
+	JSONArray parts = JSONArray.parseArray(tableDatas);
+	if(parts == null || parts.isEmpty()){
+		throw new IllegalArgumentException("没有可创建的部件数据");
+	}
+	return parts;
+}
+
+private static String resolvePartName(JSONObject part, Map<String, Object> classificationAttrs) {
+	String name = part.getString("partName");
+	String prefix = "自动生成的(";
+	if(name != null && name.startsWith(prefix) && name.endsWith(")")){
+		String attrName = name.substring(prefix.length(), name.length() - 1);
+		Object value = "CSM_NODE_NAME".equalsIgnoreCase(attrName)
+				? part.getString("clsDisplayName") : classificationAttrs.get(attrName);
+		return value == null ? "" : value.toString();
+	}
+	return name;
+}
+
+/*
+ * 继续使用原组件的属性类型转换及 OIR 初始化，但不调用其直接保存的 createParts。
+ * 路径字符串不能唯一定位不同容器下的 /Default；必须在保存前绑定实际文件夹对象。
+ */
+private static class FolderAwareBatchCreatePartHelper extends BatchCreatePartHelper {
+	private Map<String, Object> readAttrs(JSONObject part, String prefix) throws Exception {
+		Map<String, Object> attrs = new LinkedHashMap<String, Object>();
+		int count = part.getIntValue(prefix + "AttrsNumber");
+		for(int i = 0; i < count; i++){
+			JSONObject attr = part.getJSONArray(prefix + "Attr" + i).getJSONObject(0);
+			attrs.put(attr.getString("attrName"), parseValueByType(attr));
+		}
+		return attrs;
+	}
+
+	private String createInFolder(String tableDatas, Folder folder) throws Exception {
+		JSONArray parts = readPartData(tableDatas);
+		WTContainerRef containerRef = WTContainerRef.newWTContainerRef(folder.getContainer());
+		boolean usingOIR = CreatePartPropUtil.isUsingOIR();
+		String view = CreatePartPropUtil.getPartView();
+		Transaction transaction = new Transaction();
+		try{
+			transaction.start();
+			for(int i = 0; i < parts.size(); i++){
+				JSONObject partData = parts.getJSONObject(i);
+				Map<String, Object> typeAttrs = readAttrs(partData, "type");
+				Map<String, Object> classificationAttrs = readAttrs(partData, "cls");
+				Map<String, Object> attrs = new LinkedHashMap<String, Object>();
+				/* 初始化属性前先确定容器，防止相同名称的 Default 柜串到站点域。 */
+				attrs.put("containerReference", containerRef);
+				attrs.putAll(typeAttrs);
+				attrs.put(CreatePartPropUtil.getPartClfAttr(), partData.getString("clsName"));
+				attrs.putAll(classificationAttrs);
+				attrs.put("view", view);
+				attrs.put("name", resolvePartName(partData, classificationAttrs));
+				attrs.put("containerReference", containerRef);
+				/* 目录由 FolderHelper 按对象赋值，不经过通用属性的路径解析。 */
+				attrs.remove("folder");
+				attrs.remove("folder.id");
+				attrs.putIfAbsent("source", Source.getSourceDefault());
+				attrs.putIfAbsent("defaultUnit", QuantityUnit.getQuantityUnitDefault());
+				attrs.putIfAbsent("partType", PartType.getPartTypeDefault());
+				String typeName = partData.getString("partSoftType");
+				if(typeName == null || typeName.trim().length() == 0){
+					typeName = "wt.part.WTPart";
+				}else{
+					typeName = typeName.substring(typeName.lastIndexOf('|') + 1);
+				}
+				WTPart part = (WTPart) PIPersistableHelper.service.newPersistable(typeName, attrs, usingOIR);
+				part.setContainerReference(containerRef);
+				FolderHelper.assignLocation(part, folder);
+				part = (WTPart) PersistenceHelper.manager.save(part);
+				Folder savedFolder = FolderHelper.service.getFolder(part);
+				if(savedFolder == null || !PersistenceHelper.getObjectIdentifier((Persistable) folder)
+						.equals(PersistenceHelper.getObjectIdentifier((Persistable) savedFolder))){
+					throw new IllegalStateException("保存目录与所选文件夹不一致，本次批量创建已撤销");
+				}
+			}
+			transaction.commit();
+			transaction = null;
+			return "success";
+		}finally{
+			if(transaction != null){
+				transaction.rollback();
+			}
+		}
+	}
+}
+%>
 <%
 Log logger = LogFactory.getLog(this.getClass());
 String actionType = request.getParameter("actionType");
@@ -77,11 +183,26 @@ if("getClsAttrs".equals(actionType)){
 }else if("submitTable".equals(actionType)){
 	String tableDatas = request.getParameter("tableDatas");
 	String folderOid = request.getParameter("folderOid");
-	if(folderOid.indexOf("~")>=0){
-		folderOid = folderOid.substring(0, folderOid.indexOf("~"));
+	String message;
+	try{
+		if(folderOid == null || folderOid.trim().length() == 0){
+			throw new IllegalArgumentException("无法确定创建目录，请从目标文件夹重新打开批量创建");
+		}
+		folderOid = folderOid.trim();
+		if(folderOid.indexOf("~")>=0){
+			folderOid = folderOid.substring(0, folderOid.indexOf("~"));
+		}
+		Object target = NmOid.newNmOid(folderOid).getRefObject();
+		if(!(target instanceof Folder)){
+			throw new IllegalArgumentException("创建位置不是文件夹，请从目标文件夹重新打开批量创建");
+		}
+		Folder folder = (Folder) target;
+		folderOid = new ReferenceFactory().getReferenceString((Persistable) folder);
+		message = new FolderAwareBatchCreatePartHelper().createInFolder(tableDatas, folder);
+	}catch(Exception e){
+		logger.error("批量创建部件失败，目标目录：" + folderOid, e);
+		message = "Error: " + e.getLocalizedMessage();
 	}
-	//System.out.println("tableDatas="+tableDatas);
-	String message = new BatchCreatePartHelper().createParts(tableDatas, folderOid);
 	if(message != null && message.contains("Error")){
 		out.write("@'state':'创建失败','message':"+message+"@");
 	}else{
