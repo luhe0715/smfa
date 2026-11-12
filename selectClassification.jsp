@@ -31,7 +31,7 @@ String seq = request.getParameter("seq");
 	</div>
 	<input type="button" name="selectOK" id="selectOK" class="formTableButton" onclick="selectItemsReturn();" value="确定"/>
 </div>
-<script type="text/javascript" src="netmarkets/jsp/ext/gwc/part/createpart/classificationAttributeOrder.js"></script>
+<script type="text/javascript" src="netmarkets/jsp/ext/gwc/part/createpart/classificationAttributeOrder.js?v=20261111-r0504-product-category"></script>
 <script type="text/javascript">
 
 function selectItemsReturn(){
