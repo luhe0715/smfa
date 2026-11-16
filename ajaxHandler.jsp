@@ -1,7 +1,6 @@
 <%@page import="com.alibaba.fastjson.JSONObject"%>
 <%@page import="com.alibaba.fastjson.JSONArray"%>
 <%@page import="ext.gwc.part.createpart.util.BatchCreatePartHelper"%>
-<%@page import="com.ptc.windchill.csm.common.CsmConstants"%>
 <%@page import="com.ptc.core.meta.common.AttributeTypeIdentifier"%>
 <%@page import="java.util.Set"%>
 <%@page import="wt.facade.classification.ClassificationFacade"%>
@@ -23,8 +22,190 @@
 <%@page import="wt.part.QuantityUnit"%>
 <%@page import="wt.part.PartType"%>
 <%@page import="wt.pom.Transaction"%>
+<%@page import="java.util.Collection"%>
+<%@page import="java.util.ArrayList"%>
+<%@page import="java.util.HashSet"%>
+<%@page import="java.util.Locale"%>
+<%@page import="java.util.regex.Matcher"%>
+<%@page import="java.util.regex.Pattern"%>
+<%@page import="ext.pi.core.PIAttributeHelper"%>
+<%@page import="ext.pi.core.PIClassificationHelper"%>
+<%@page import="com.ptc.core.meta.common.DiscreteSet"%>
+<%@page import="com.ptc.core.lwc.common.view.AttributeDefinitionReadView"%>
+<%@page import="com.ptc.core.lwc.common.view.ConstraintDefinitionReadView"%>
+<%@page import="com.ptc.core.lwc.common.view.ConstraintRuleDefinitionReadView"%>
+<%@page import="com.ptc.core.lwc.common.view.TypeDefinitionReadView"%>
+<%@page import="com.ptc.core.lwc.common.view.LayoutDefinitionReadView"%>
+<%@page import="com.ptc.core.lwc.common.view.GroupDefinitionReadView"%>
+<%@page import="com.ptc.core.lwc.common.view.GroupMembershipReadView"%>
 <%@ page language="java" isThreadSafe="true" contentType="text/html;charset=UTF-8"%>
 <%!
+/* 使用类型内部名，兼容测试/正式组织域前缀；不依赖界面显示名称。 */
+private static boolean isOemPartType(String partSoftType) {
+	if(partSoftType == null){
+		return false;
+	}
+	String typeName = partSoftType.trim();
+	typeName = typeName.substring(typeName.lastIndexOf('|') + 1);
+	typeName = typeName.substring(typeName.lastIndexOf('.') + 1);
+	return "horn_OEMPart".equals(typeName);
+}
+
+private static void requireOemChineseName(String partSoftType, JSONObject typeAttrs) {
+	if(!isOemPartType(partSoftType)){
+		return;
+	}
+	JSONArray nameRules = typeAttrs.getJSONArray("horn_name");
+	if(nameRules == null || nameRules.isEmpty()){
+		throw new IllegalStateException("OEM 类型创建布局未返回中文名称属性 horn_name，请检查类型配置");
+	}
+	for(int i = 0; i < nameRules.size(); i++){
+		if("ValueRequiredConstraint".equals(nameRules.getJSONObject(i).getString("ruleTypeName"))){
+			return;
+		}
+	}
+	JSONObject required = new JSONObject();
+	required.putAll(nameRules.getJSONObject(0));
+	required.put("ruleTypeName", "ValueRequiredConstraint");
+	nameRules.add(required);
+}
+
+private static void validateOemChineseName(String partSoftType, Map<String, Object> typeAttrs) {
+	Object name = typeAttrs.get("horn_name");
+	if(isOemPartType(partSoftType) && (name == null || name.toString().trim().length() == 0)){
+		throw new IllegalArgumentException("OEM 部件的中文名称为必填项，请填写中文名称");
+	}
+}
+
+/* 从所选类型实际启用的分类绑定获取命名空间，不按显示名称猜测 OEM/ODM。 */
+private static String resolveClassificationNamespace(String partSoftType) throws Exception {
+	if(partSoftType == null || partSoftType.trim().length() == 0){
+		throw new IllegalArgumentException("请先选择部件类型，再选择分类");
+	}
+	String typeName = partSoftType.trim();
+	typeName = typeName.substring(typeName.lastIndexOf('|') + 1);
+	String bindingAttr = CreatePartPropUtil.getPartClfAttr();
+	Collection<ConstraintDefinitionReadView> constraints =
+			PIAttributeHelper.service.getConstraints(typeName, bindingAttr);
+	Set<String> namespaces = new HashSet<String>();
+	Pattern namespacePattern = Pattern.compile("(?:^|[|:])ns=([^:|]+)");
+	for(ConstraintDefinitionReadView constraint : constraints){
+		if(constraint.isDisabled()){
+			continue;
+		}
+		ConstraintRuleDefinitionReadView rule = constraint.getRule();
+		if(rule == null || !rule.getRuleClassname().endsWith("DiscreteSetConstraint")
+				|| !"Classification".equalsIgnoreCase(rule.getDefQualifier())){
+			continue;
+		}
+		Object ruleData = constraint.getRuleData();
+		if(!(ruleData instanceof DiscreteSet)){
+			continue;
+		}
+		Object[] elements = ((DiscreteSet) ruleData).getElements();
+		if(elements == null){
+			continue;
+		}
+		for(Object element : elements){
+			Matcher matcher = namespacePattern.matcher(String.valueOf(element));
+			if(matcher.find() && matcher.group(1).trim().length() > 0){
+				namespaces.add(matcher.group(1).trim());
+			}
+		}
+	}
+	if(namespaces.size() != 1){
+		throw new IllegalArgumentException("无法唯一确定所选类型的分类命名空间，请检查 "
+				+ bindingAttr + " 属性的分类绑定约束");
+	}
+	return namespaces.iterator().next();
+}
+
+private static class NamespaceAwareBatchCreatePartHelper extends BatchCreatePartHelper {
+	private JSONObject getScopedClsAttrs(String clsName, String clsDisplayName,
+			String partSoftType) throws Exception {
+		String nameSpace = resolveClassificationNamespace(partSoftType);
+		TypeDefinitionReadView node = PIClassificationHelper.service.getNodeBySpace(clsName, nameSpace);
+		if(node == null){
+			throw new IllegalArgumentException("所选类型的分类命名空间中不存在该分类：" + clsName);
+		}
+		Collection<AttributeDefinitionReadView> attributes =
+				PIClassificationHelper.service.getAttributesBySpace(clsName, nameSpace);
+		Set<String> excluded = new HashSet<String>();
+		ArrayList<String> layoutOrder = new ArrayList<String>();
+		/* 沿用原组件的布局可见范围，保留 Classification Group 中的属性顺序。 */
+		for(LayoutDefinitionReadView layout : node.getAllLayouts()){
+			for(GroupDefinitionReadView group : layout.getAllGroups()){
+				for(GroupMembershipReadView membership : group.getAllMembers()){
+					Object member = membership.getMember();
+					if(member instanceof AttributeDefinitionReadView){
+						String attrName = ((AttributeDefinitionReadView) member).getName();
+						if("Classification Group".equals(group.getName())){
+							if(!layoutOrder.contains(attrName)){
+								layoutOrder.add(attrName);
+							}
+						}else{
+							excluded.add(attrName);
+						}
+					}
+				}
+			}
+		}
+		JSONObject result = new JSONObject(true);
+		JSONArray attrNames = new JSONArray();
+		for(AttributeDefinitionReadView attribute : attributes){
+			String attrName = attribute.getName();
+			if(excluded.contains(attrName) || !getCreateScreenVisibility(attribute)){
+				continue;
+			}
+			JSONArray attrRules = getAttributeConstraints(attribute, attrName, clsName,
+					clsDisplayName, Locale.CHINA);
+			/* 原组件会返回已禁用的必填约束；仅有启用的必填约束才允许显示星号。 */
+			boolean required = false;
+			for(ConstraintDefinitionReadView constraint : attribute.getAllConstraints()){
+				if(!constraint.isDisabled() && constraint.getRule().getRuleClassname()
+						.endsWith("ValueRequiredConstraint")){
+					required = true;
+				}
+			}
+			if(!required){
+				for(int i = attrRules.size() - 1; i >= 0; i--){
+					if("ValueRequiredConstraint".equals(attrRules.getJSONObject(i).getString("ruleTypeName"))){
+						attrRules.remove(i);
+					}
+				}
+			}
+			/* 无约束属性仍需显示，不能因为未配置必填等约束而丢失。 */
+			if(attrRules.isEmpty()){
+				JSONObject metadata = new JSONObject();
+				metadata.put("attrName", attrName);
+				metadata.put("attrDisplayName", attribute.getDisplayName());
+				String dataType = attribute.getDatatype().getName();
+				metadata.put("attrDataType", dataType.substring(dataType.lastIndexOf('.') + 1));
+				String unit = attribute.getDisplayUnits("SI");
+				metadata.put("attrUnit", unit == null ? "" : unit);
+				metadata.put("ruleTypeName", "");
+				attrRules.add(metadata);
+			}
+			result.put(attrName, attrRules);
+		}
+		for(String attrName : layoutOrder){
+			if(result.containsKey(attrName)){
+				attrNames.add(attrName);
+			}
+		}
+		for(String attrName : result.keySet()){
+			if(!attrNames.contains(attrName)){
+				attrNames.add(attrName);
+			}
+		}
+		result.put("attrNamesAry", attrNames);
+		result.put("nameSpace", nameSpace);
+		/* 本项目 ODM 源表的命名空间为 Part；其他分类树不套用 ODM 字段清单。 */
+		result.put("useOdmAttributeOrder", "Part".equals(nameSpace));
+		return result;
+	}
+}
+
 private static JSONArray readPartData(String tableDatas) {
 	JSONArray parts = JSONArray.parseArray(tableDatas);
 	if(parts == null || parts.isEmpty()){
@@ -71,6 +252,7 @@ private static class FolderAwareBatchCreatePartHelper extends BatchCreatePartHel
 			for(int i = 0; i < parts.size(); i++){
 				JSONObject partData = parts.getJSONObject(i);
 				Map<String, Object> typeAttrs = readAttrs(partData, "type");
+				validateOemChineseName(partData.getString("partSoftType"), typeAttrs);
 				Map<String, Object> classificationAttrs = readAttrs(partData, "cls");
 				Map<String, Object> attrs = new LinkedHashMap<String, Object>();
 				/* 初始化属性前先确定容器，防止相同名称的 Default 柜串到站点域。 */
@@ -121,13 +303,26 @@ String actionType = request.getParameter("actionType");
 if("getClsAttrs".equals(actionType)){
 	String clsName = request.getParameter("clsName");
 	String clsDisplayName = request.getParameter("clsDisplayName");
-	JSONObject json = new BatchCreatePartHelper().getClsAttrs(clsName, clsDisplayName);
-	String jsonStr = json.toJSONString();
-	out.write("@'state':'查询成功','message':"+jsonStr+"@");
+	String partSoftType = request.getParameter("partSoftType");
+	try{
+		if(clsName == null || clsName.trim().length() == 0){
+			throw new IllegalArgumentException("请选择分类");
+		}
+		JSONObject json = new NamespaceAwareBatchCreatePartHelper()
+				.getScopedClsAttrs(clsName, clsDisplayName, partSoftType);
+		out.write("@'state':'查询成功','message':" + json.toJSONString() + "@");
+	}catch(Exception e){
+		logger.error("查询分类属性失败，类型：" + partSoftType + "，分类：" + clsName, e);
+		JSONObject error = new JSONObject();
+		error.put("error", e.getLocalizedMessage());
+		out.write("@'state':'查询失败','message':" + error.toJSONString() + "@");
+	}
 }else if("getTypeAttrs".equals(actionType)){
 	String typeName = request.getParameter("typeName");
 	String typeDisplayName = request.getParameter("typeDisplayName");
 	JSONObject json = new BatchCreatePartHelper().getTypeAttrs(typeName, typeDisplayName);
+	/* 复用原页面的红色星号及 required 提交检查，仅补充 OEM 的中文名称要求。 */
+	requireOemChineseName(typeName, json);
 	String jsonStr = json.toJSONString();
 	out.write("@'state':'查询成功','message':"+jsonStr+"@");
 }else if("getMaterialLinkageData".equals(actionType)){

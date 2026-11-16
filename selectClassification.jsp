@@ -37,45 +37,14 @@ String seq = request.getParameter("seq");
 function selectItemsReturn(){
 	var table = PTC.jca.table.Utils.getTable('ext.gwc.part.createpart.builder.ClassificationBuilder');
 	var selected = table.getSelectionModel().getSelections();
-	
-	var seq = '<%=seq%>';
-	var seqs = [];
-	var select_displayName ;
-	var select_name ;
-	if(selected.length > 0){
-		select_displayName = selected[0].data.displayName;
- 		select_name = selected[0].data.name;
- 
- 		/* if(select_name.length != 5 || select_name == "anker"){
-  			alert("【"+select_displayName+"】不是小类，请重新选择!");
-  			return;
- 		}*/
-		if (seq.length > 1) {
-			seqs = seq.split(",");
-			for (var i = 0; i < seqs.length; i++) {
-				var openerClsDisplayName = window.opener.document.getElementById("clsDisplayName" + seqs[i]);
-				var openerClsName = window.opener.document.getElementById("clsName" + seqs[i]);
-				var partName = window.opener.document.getElementById("partName" + seqs[i]);
-				var partNameDefault = select_displayName.substring(select_displayName.indexOf("_")+1,select_displayName.length);
-				openerClsDisplayName.value = select_displayName;
-				openerClsName.value = select_name;
-				//partName.value = partNameDefault;
-				getCSMAutonamingValues(select_name,"",partName);
-				setClsAttrs(select_name, select_displayName);
-			}
-		} else {
-			var openerClsDisplayName = window.opener.document.getElementById("clsDisplayName" + seq);
-			var openerClsName = window.opener.document.getElementById("clsName" + seq);
-			var partName = window.opener.document.getElementById("partName" + seq);
-			var partNameDefault = select_displayName.substring(select_displayName.indexOf("_")+1,select_displayName.length);
-			openerClsDisplayName.value = select_displayName;
-			openerClsName.value = select_name;
-			//partName.value = partNameDefault;
-			getCSMAutonamingValues(select_name,"",partName);
-			setClsAttrs(select_name, select_displayName);
-		}
+	if(selected.length == 0){
+		alert("请选择分类");
+		return;
 	}
-	window.close();
+	/* 查询成功后才更新父页面；失败时保留原分类及已录入属性。 */
+	if(setClsAttrs(selected[0].data.name, selected[0].data.displayName)){
+		window.close();
+	}
 }
 
 	/**
@@ -124,33 +93,55 @@ function selectItemsReturn(){
 
 /* 根据选择分类,在父页面中创建对应的属性元素 */
 function setClsAttrs(clsName, clsDisplayName){
-	var options = {
-		       asynchronous: false,
-		       parameters: {
-		    	   actionType : "getClsAttrs",
-		    	   clsName : clsName,
-		    	   clsDisplayName : clsName,
-		       }
-			};
-	var url = "netmarkets/jsp/ext/gwc/part/createpart/ajaxHandler.jsp";
-	var response = requestHandler.doRequest(url, options);
-	var resText = response.responseText;
-	
-	var seq = '<%=seq%>';
-	var seqs = [];
-	if(resText.indexOf("查询成功") >0){
-		resText = resText.substring(resText.indexOf("'message':")+10,resText.lastIndexOf("@"));
-		var dataJson = eval('(' + resText + ')'); 	
-		
-		if (seq.length > 1) {
-			seqs = seq.split(",");
-			for (var r = 0; r < seqs.length; r++) {
-				seq = seqs[r];
-				getHTML(dataJson, seq, clsName);
-			}
-		} else {
-			getHTML(dataJson, seq, clsName);
+	var seqs = String('<%=seq%>').split(",");
+	var partSoftType = null;
+	for(var rowIndex = 0; rowIndex < seqs.length; rowIndex++){
+		seqs[rowIndex] = seqs[rowIndex].replace(/^\s+|\s+$/g, "");
+		var typeInput = window.opener.document.getElementById("partSoftType" + seqs[rowIndex]);
+		if(!typeInput || !typeInput.value){
+			alert("请先选择部件类型");
+			return false;
 		}
+		if(partSoftType !== null && partSoftType !== typeInput.value){
+			alert("请选择相同类型的行设置分类");
+			return false;
+		}
+		partSoftType = typeInput.value;
+	}
+	var options = {
+		asynchronous: false,
+		parameters: {
+			actionType : "getClsAttrs",
+			clsName : clsName,
+			clsDisplayName : clsDisplayName,
+			partSoftType : partSoftType
+		}
+	};
+	var url = "netmarkets/jsp/ext/gwc/part/createpart/ajaxHandler.jsp";
+	try{
+		var response = requestHandler.doRequest(url, options);
+		var resText = response.responseText || "";
+		var messageIndex = resText.indexOf("'message':");
+		var messageEnd = resText.lastIndexOf("@");
+		if(response.status != 200 || messageIndex < 0 || messageEnd <= messageIndex){
+			throw new Error("分类属性查询失败，请查看服务器日志");
+		}
+		var dataJson = JSON.parse(resText.substring(messageIndex + 10, messageEnd));
+		if(resText.indexOf("'state':'查询成功'") < 0 || !dataJson.nameSpace){
+			throw new Error(dataJson.error || "分类属性接口未返回命名空间，请同时更新两个 JSP 文件");
+		}
+		for(var r = 0; r < seqs.length; r++){
+			var seq = seqs[r];
+			window.opener.document.getElementById("clsDisplayName" + seq).value = clsDisplayName;
+			window.opener.document.getElementById("clsName" + seq).value = clsName;
+			getHTML(dataJson, seq, clsName);
+			var partName = window.opener.document.getElementById("partName" + seq);
+			getCSMAutonamingValues(clsName, dataJson.nameSpace, partName);
+		}
+		return true;
+	}catch(e){
+		alert(e.message || String(e));
+		return false;
 	}
 }
 
@@ -190,7 +181,9 @@ function getPairedClassificationAttrKeys(dataJson, clsName){
 	var baseNameOrder = [];
 	var orderedKeys = [];
 	var hasMaterialAttr = false;
-	var hasWorkbookConfig = Object.prototype.hasOwnProperty.call(odmClassificationAttributeOrder, clsName);
+	/* OEM 使用自身分类布局；ODM 才应用现有 ODM 表格属性清单。 */
+	var hasWorkbookConfig = dataJson["useOdmAttributeOrder"] !== false
+			&& Object.prototype.hasOwnProperty.call(odmClassificationAttributeOrder, clsName);
 	var workbookAttrNames = hasWorkbookConfig ? odmClassificationAttributeOrder[clsName] : [];
 	var workbookAttrMap = {};
 	for(var allowedIndex = 0; allowedIndex < workbookAttrNames.length; allowedIndex++){
