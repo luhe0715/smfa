@@ -44,12 +44,15 @@ String seq = request.getParameter("seq");
 
 function selectItemsReturn(){
 	var selectObj = document.getElementById("selectPartSoftType");
-	var seq = '<%=seq%>';
-	var seqs = [];
+	var seqs = String('<%=seq%>').split(",");
 	var select_displayName ="";
 	var select_name ="";
 	if(selectObj){
  		select_name = selectObj.value;
+		if(!select_name){
+			alert("请选择部件类型");
+			return;
+		}
  		if(select_name){
  		    if(selectObj.selectedIndex!==undefined){
                 select_displayName = selectObj.options[selectObj.selectedIndex].text;
@@ -58,34 +61,24 @@ function selectItemsReturn(){
                 select_displayName=document.getElementsByName("createpart$selectPartSoftType$$___selectPartSoftType___textbox")[0].value;
             }
  		}
- 		// alert("select_name="+select_name+",select_displayName="+select_displayName);
-		if (seq.length > 1) {
-			seqs = seq.split(",");
-			for (var i = 0; i < seqs.length; i++) {
-				var openerTypeDisplayName = window.opener.document.getElementById("partSoftDisplayType" + seqs[i]);
-				var openerTypeName = window.opener.document.getElementById("partSoftType" + seqs[i]);
-				openerTypeDisplayName.value = select_displayName;
-				openerTypeName.value = select_name;
-				setTypeAttrs(select_name, select_displayName);
-			}
-		} else {
+		/* 单行和批量共用一次查询；查询失败时保留原类型及分类。 */
+		if(!setTypeAttrs(select_name, select_displayName)){
+			return;
+		}
+		for(var i = 0; i < seqs.length; i++){
+			var seq = seqs[i].replace(/^\s+|\s+$/g, "");
 			var openerTypeDisplayName = window.opener.document.getElementById("partSoftDisplayType" + seq);
 			var openerTypeName = window.opener.document.getElementById("partSoftType" + seq);
-            var typeValue = openerTypeName.value;
+			var typeValue = openerTypeName.value;
 			openerTypeDisplayName.value = select_displayName;
 			openerTypeName.value = select_name;
-			setTypeAttrs(select_name, select_displayName);
-            if(typeValue != "" && select_name != typeValue){
-                var clsNameObj = window.opener.document.getElementById("clsName" + seq);
-                var clsDisplayName = window.opener.document.getElementById('clsDisplayName'+seq);
-                clsDisplayName.value="";
-                clsNameObj.value="";
-                var table = window.opener.document.getElementById('formTable');
-                table.rows[seq].cells[5].innerHTML = "";
-            }
+			if(select_name != typeValue){
+				window.opener.document.getElementById("clsDisplayName" + seq).value = "";
+				window.opener.document.getElementById("clsName" + seq).value = "";
+				/* 按行 ID 定位，避免多位行号或表格行位置变化时清错行。 */
+				window.opener.document.getElementById("row" + seq).cells[5].innerHTML = "";
+			}
 		}
-		
-		
 	}
 	window.close();
 }
@@ -104,22 +97,18 @@ function setTypeAttrs(typeName, typeDisplayName){
 	var response = requestHandler.doRequest(url, options);
 	var resText = response.responseText;
 	
-	var seq = '<%=seq%>';
-	var seqs = [];
+	var seqs = String('<%=seq%>').split(",");
 	if(resText.indexOf("查询成功") >0){
 		resText = resText.substring(resText.indexOf("'message':")+10,resText.lastIndexOf("@"));
 		var dataJson = eval('(' + resText + ')'); 	
 		
-		if (seq.length > 1) {
-			seqs = seq.split(",");
-			for (var r = 0; r < seqs.length; r++) {
-				seq = seqs[r];
-				getHTML(dataJson, seq);
-			}
-		} else {
-			getHTML(dataJson, seq);
+		for(var r = 0; r < seqs.length; r++){
+			getHTML(dataJson, seqs[r].replace(/^\s+|\s+$/g, ""));
 		}
+		return true;
 	}
+	alert("类型属性查询失败，请重试");
+	return false;
 }
 		
 /* 生成html内容 */
