@@ -34,7 +34,7 @@ String seq = request.getParameter("seq");
 	<div style="overflow:auto; width: 500px; height: 500px; ">
 		<jsp:include page="${mvc:getComponentURL('ext.gwc.part.createpart.builder.ClassificationBuilder')}" />
 	</div>
-	<span id="smfaOrderVersion" style="font-size:12px;color:#666;">成品排序 v2（20261117）</span>
+	<span id="smfaOrderVersion" style="font-size:12px;color:#666;">成品排序 v3（与ODM一致）</span>
 	<input type="button" name="selectOK" id="selectOK" class="formTableButton" onclick="selectItemsReturn();" value="确定"/>
 </div>
 <script type="text/javascript" src="netmarkets/jsp/ext/gwc/part/createpart/classificationAttributeOrder.js?v=20261111-r0504-product-category"></script>
@@ -307,15 +307,21 @@ function getPairedClassificationAttrKeys(dataJson, clsName, classificationContex
 	baseNameOrder = normalBaseNameOrder.concat(materialBaseNameOrder[0],
 			materialBaseNameOrder[1], materialBaseNameOrder[2]);
 
-	/* ODM 按源表排列；OEM 的 F 成品分类统一采用已确认的 F0201 显示顺序。 */
+	/* OEM 成品复用对应分类的 ODM 顺序，只排序，不套用 ODM 的字段过滤和约束。 */
 	var preferredAttrNames = workbookAttrNames;
 	var isOemFinished = isOemFinishedClassification(dataJson, clsName, classificationContext);
-	var preferredDisplayNames = ["项目号", "颜色", "版本", "客户代码", "项目名称", "产品类型",
-			"客户料号", "标准化率统计"];
+	var preferredDisplayNames = {horn_projectnumber: "项目号", horn_projectname: "项目名称",
+			horn_color: "颜色", horn_version: "版本", horn_producttype: "产品类型",
+			horn_standardizationrate: "标准化率统计", horn_customercode: "客户代码",
+			horn_customerpartnumber: "客户料号", horn_model: "型号"};
 	if(isOemFinished){
-		preferredAttrNames = ["horn_ProjectNumber", "horn_Color", "horn_version",
-				"horn_CustomerCode", "horn_ProjectName", "horn_ProductType",
-				"horn_CustomerPartNumber", "horn_StandardizationRate"];
+		var finishedCodeMatch = /^(F(?:\d{2}){0,2})$/i.exec(String(clsName || "").replace(/^\s+|\s+$/g, ""))
+				|| /^(F(?:\d{2}){0,2})(?:$|[\s_\-—–])/i.exec(String(
+						classificationContext && classificationContext.clsDisplayName || "").replace(/^\s+|\s+$/g, ""));
+		var odmFinishedOrder = finishedCodeMatch ? odmClassificationAttributeOrder[finishedCodeMatch[1].toUpperCase()] : null;
+		preferredAttrNames = odmFinishedOrder && odmFinishedOrder.length ? odmFinishedOrder
+				: ["horn_ProjectNumber", "horn_ProjectName", "horn_Color", "horn_version",
+						"horn_ProductType", "horn_StandardizationRate", "horn_CustomerCode", "horn_CustomerPartNumber"];
 	}
 	var preferredBaseNameOrder = [];
 	var preferredBaseNameMap = {};
@@ -328,7 +334,7 @@ function getPairedClassificationAttrKeys(dataJson, clsName, classificationContex
 				var labelPairKey = baseNameOrder[labelIndex];
 				var chineseKey = pairByBaseName[labelPairKey].chineseKey;
 				var label = chineseKey ? String(dataJson[chineseKey][0]["attrDisplayName"] || "") : "";
-				if(label.replace(/[\s:：*]/g, "") === preferredDisplayNames[preferredIndex]){
+				if(label.replace(/[\s:：*]/g, "") === preferredDisplayNames[preferredBaseName]){
 					preferredPairKey = labelPairKey;
 					break;
 				}
