@@ -1,5 +1,10 @@
 <%@ page language="java" contentType="text/html; charset=UTF-8"
     pageEncoding="UTF-8"%>
+<%
+response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+response.setHeader("Pragma", "no-cache");
+response.setDateHeader("Expires", 0);
+%>
 <%@ include file="/netmarkets/jsp/util/beginPopup.jspf"%>
 <%@ taglib prefix="mvc" uri="http://www.ptc.com/windchill/taglib/mvc"%>
 <%@taglib uri="http://www.ptc.com/windchill/taglib/wrappers" prefix="w"%>
@@ -29,6 +34,7 @@ String seq = request.getParameter("seq");
 	<div style="overflow:auto; width: 500px; height: 500px; ">
 		<jsp:include page="${mvc:getComponentURL('ext.gwc.part.createpart.builder.ClassificationBuilder')}" />
 	</div>
+	<span id="smfaOrderVersion" style="font-size:12px;color:#666;">成品排序 v2（20261117）</span>
 	<input type="button" name="selectOK" id="selectOK" class="formTableButton" onclick="selectItemsReturn();" value="确定"/>
 </div>
 <script type="text/javascript" src="netmarkets/jsp/ext/gwc/part/createpart/classificationAttributeOrder.js?v=20261111-r0504-product-category"></script>
@@ -130,11 +136,12 @@ function setClsAttrs(clsName, clsDisplayName){
 		if(resText.indexOf("'state':'查询成功'") < 0 || !dataJson.nameSpace){
 			throw new Error(dataJson.error || "分类属性接口未返回命名空间，请同时更新两个 JSP 文件");
 		}
+		var classificationContext = {partSoftType: partSoftType, clsDisplayName: clsDisplayName};
 		for(var r = 0; r < seqs.length; r++){
 			var seq = seqs[r];
 			window.opener.document.getElementById("clsDisplayName" + seq).value = clsDisplayName;
 			window.opener.document.getElementById("clsName" + seq).value = clsName;
-			getHTML(dataJson, seq, clsName);
+			getHTML(dataJson, seq, clsName, classificationContext);
 			var partName = window.opener.document.getElementById("partName" + seq);
 			getCSMAutonamingValues(clsName, dataJson.nameSpace, partName);
 		}
@@ -173,7 +180,20 @@ function isMaterialColorClassificationAttr(attrName, attrDisplayName){
  * 分类属性由所选分类动态返回。中文属性内部名为 horn_xxx，
  * 对应英文属性内部名为 horn_xxx_en；按内部名动态配对，不依赖显示名称。
  */
-function getPairedClassificationAttrKeys(dataJson, clsName){
+function isOemFinishedClassification(dataJson, clsName, classificationContext){
+	classificationContext = classificationContext || {};
+	var typeName = String(classificationContext.partSoftType || "").replace(/^\s+|\s+$/g, "");
+	typeName = typeName.substring(typeName.lastIndexOf('|') + 1);
+	typeName = typeName.substring(typeName.lastIndexOf('.') + 1);
+	/* 正常页面以实际所选类型判定，避免依赖服务器命名空间的固定写法。 */
+	var isOem = typeName ? typeName === "horn_OEMPart" : dataJson["nameSpace"] === "horn.oem.part";
+	var internalName = String(clsName || "").replace(/^\s+|\s+$/g, "");
+	var displayName = String(classificationContext.clsDisplayName || "").replace(/^\s+|\s+$/g, "");
+	return isOem && (/^F(?:\d{2}){0,2}$/i.test(internalName)
+			|| /^F(?:\d{2}){0,2}(?:$|[\s_\-—–])/i.test(displayName));
+}
+
+function getPairedClassificationAttrKeys(dataJson, clsName, classificationContext){
 	var sourceKeys = [];
 	var configuredKeys = dataJson["attrNamesAry"];
 	var sourceKeyMap = {};
@@ -287,24 +307,45 @@ function getPairedClassificationAttrKeys(dataJson, clsName){
 	baseNameOrder = normalBaseNameOrder.concat(materialBaseNameOrder[0],
 			materialBaseNameOrder[1], materialBaseNameOrder[2]);
 
-	/* 以 classification_odm v1.5 中当前分类的属性行顺序为准。 */
-	var workbookBaseNameOrder = [];
-	var workbookBaseNameMap = {};
-	for(var workbookIndex = 0; workbookIndex < workbookAttrNames.length; workbookIndex++){
-		var workbookBaseName = workbookAttrNames[workbookIndex].replace(/_en$/i, "").toLowerCase();
-		var workbookPairKey = "$" + workbookBaseName;
-		if(pairByBaseName[workbookPairKey] && !workbookBaseNameMap[workbookPairKey]){
-			workbookBaseNameOrder.push(workbookPairKey);
-			workbookBaseNameMap[workbookPairKey] = true;
+	/* ODM 按源表排列；OEM 的 F 成品分类统一采用已确认的 F0201 显示顺序。 */
+	var preferredAttrNames = workbookAttrNames;
+	var isOemFinished = isOemFinishedClassification(dataJson, clsName, classificationContext);
+	var preferredDisplayNames = ["项目号", "颜色", "版本", "客户代码", "项目名称", "产品类型",
+			"客户料号", "标准化率统计"];
+	if(isOemFinished){
+		preferredAttrNames = ["horn_ProjectNumber", "horn_Color", "horn_version",
+				"horn_CustomerCode", "horn_ProjectName", "horn_ProductType",
+				"horn_CustomerPartNumber", "horn_StandardizationRate"];
+	}
+	var preferredBaseNameOrder = [];
+	var preferredBaseNameMap = {};
+	for(var preferredIndex = 0; preferredIndex < preferredAttrNames.length; preferredIndex++){
+		var preferredBaseName = preferredAttrNames[preferredIndex].replace(/_en$/i, "").toLowerCase();
+		var preferredPairKey = "$" + preferredBaseName;
+		/* 同一显示字段在服务器上可能使用不同内部名，按明确的中文标签兼容匹配。 */
+		if(isOemFinished && !pairByBaseName[preferredPairKey]){
+			for(var labelIndex = 0; labelIndex < baseNameOrder.length; labelIndex++){
+				var labelPairKey = baseNameOrder[labelIndex];
+				var chineseKey = pairByBaseName[labelPairKey].chineseKey;
+				var label = chineseKey ? String(dataJson[chineseKey][0]["attrDisplayName"] || "") : "";
+				if(label.replace(/[\s:：*]/g, "") === preferredDisplayNames[preferredIndex]){
+					preferredPairKey = labelPairKey;
+					break;
+				}
+			}
+		}
+		if(pairByBaseName[preferredPairKey] && !preferredBaseNameMap[preferredPairKey]){
+			preferredBaseNameOrder.push(preferredPairKey);
+			preferredBaseNameMap[preferredPairKey] = true;
 		}
 	}
-	/* 仅对表格未收录的分类保留接口顺序；已收录分类已过滤掉额外属性。 */
+	/* 只调整实际返回属性的顺序；其余属性保留原相对顺序，继续追加显示。 */
 	for(var remainingIndex = 0; remainingIndex < baseNameOrder.length; remainingIndex++){
-		if(!workbookBaseNameMap[baseNameOrder[remainingIndex]]){
-			workbookBaseNameOrder.push(baseNameOrder[remainingIndex]);
+		if(!preferredBaseNameMap[baseNameOrder[remainingIndex]]){
+			preferredBaseNameOrder.push(baseNameOrder[remainingIndex]);
 		}
 	}
-	baseNameOrder = workbookBaseNameOrder;
+	baseNameOrder = preferredBaseNameOrder;
 
 	for(var j = 0; j < baseNameOrder.length; j++){
 		var attrPair = pairByBaseName[baseNameOrder[j]];
@@ -324,7 +365,7 @@ function getPairedClassificationAttrKeys(dataJson, clsName){
 }
 		
 /* 生成html内容 */
-function getHTML(dataJson, seq, clsName){
+function getHTML(dataJson, seq, clsName, classificationContext){
 	console.log(dataJson);
 	var table = window.opener.document.getElementById('formTable');
 	var index = 0;
@@ -343,7 +384,7 @@ function getHTML(dataJson, seq, clsName){
 	cell.innerHTML = "";							//每次先清空
 	var innerHTML="<table class='clsAttrTable' id='clsAttrTable"+seq+"'><tr>";
 	var tdNum=0;
-	var attrKeys = getPairedClassificationAttrKeys(dataJson, clsName);
+	var attrKeys = getPairedClassificationAttrKeys(dataJson, clsName, classificationContext);
 	for(var keyIndex=0; keyIndex<attrKeys.length; keyIndex++){
 		var key = attrKeys[keyIndex];
 		if(key === null){

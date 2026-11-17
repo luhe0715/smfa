@@ -948,7 +948,7 @@
 			partSoftType = typeObj.value;
 			seqs[rowIndex] = rowSeq;
 		}
-		window.open('netmarkets/jsp/ext/gwc/part/createpart/selectClassification.jsp?seq='
+		window.open('netmarkets/jsp/ext/gwc/part/createpart/selectClassification.jsp?orderVersion=20261117-v2&seq='
 				+ encodeURIComponent(seqs.join(",")) + '&partSoftType=' + encodeURIComponent(partSoftType),
 				'newwindow','height=600,width=550,top=80,left=350,toolbar=no,menubar=no,scrollbars=no,resizable=no,location=no,status=no');
 	}
