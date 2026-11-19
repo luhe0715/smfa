@@ -37,7 +37,7 @@ String seq = request.getParameter("seq");
 	<span id="smfaOrderVersion" style="font-size:12px;color:#666;">成品排序 v3（与ODM一致）</span>
 	<input type="button" name="selectOK" id="selectOK" class="formTableButton" onclick="selectItemsReturn();" value="确定"/>
 </div>
-<script type="text/javascript" src="netmarkets/jsp/ext/gwc/part/createpart/classificationAttributeOrder.js?v=20261111-r0504-product-category"></script>
+<script type="text/javascript" src="netmarkets/jsp/ext/gwc/part/createpart/classificationAttributeOrder.js?v=20261119-h1001-h1002-color-order"></script>
 <script type="text/javascript">
 
 function selectItemsReturn(){
